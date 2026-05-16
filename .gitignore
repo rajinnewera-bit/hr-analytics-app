@@ -1,0 +1,16 @@
+.DS_Store
+
+# Frontend
+frontend/.next
+frontend/.next-dev
+frontend/.next.stale-*
+frontend/node_modules
+frontend/.env.local
+frontend/.env.production.local
+
+# Backend
+backend/.venv
+backend/__pycache__
+backend/.env
+backend/uploads/*
+!backend/uploads/.gitkeep
