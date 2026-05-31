@@ -198,6 +198,36 @@ export type AttendanceProcessedRow = {
   derived_flags: string[];
   anomaly_flags: string[];
   source_row_numbers: number[];
+  original_employee_names?: string[];
+  original_employee_codes?: string[];
+  merged_from_record_ids?: string[];
+};
+
+export type EmployeePayableAdjustment = {
+  final_employee_name: string;
+  final_employee_code?: string;
+  payable_days_adjustment?: number;
+  comp_off_adjustment?: number;
+  leave_adjustment?: number;
+  adjustment_remarks?: string;
+};
+
+export type AttendanceEmployeeMergeSource = {
+  source_names?: string[];
+  source_codes?: string[];
+};
+
+export type AttendanceMergeInstruction = {
+  final_employee_name: string;
+  final_employee_code?: string;
+  sources: AttendanceEmployeeMergeSource;
+  adjustments?: EmployeePayableAdjustment;
+};
+
+export type AttendanceMergeRequest = {
+  sheet_name: string;
+  merge_instructions?: AttendanceMergeInstruction[];
+  dry_run?: boolean;
 };
 
 export type AttendanceStatusSummary = {

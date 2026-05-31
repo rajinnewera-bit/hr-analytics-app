@@ -161,6 +161,36 @@ class AttendanceProcessedRow(BaseModel):
     derived_flags: list[str]
     anomaly_flags: list[str]
     source_row_numbers: list[int]
+    original_employee_names: list[str] = []
+    original_employee_codes: list[str] = []
+    merged_from_record_ids: list[str] = []
+
+
+class EmployeePayableAdjustment(BaseModel):
+    final_employee_name: str
+    final_employee_code: Optional[str] = None
+    payable_days_adjustment: Optional[float] = None
+    comp_off_adjustment: Optional[float] = None
+    leave_adjustment: Optional[float] = None
+    adjustment_remarks: str = ""
+
+
+class AttendanceEmployeeMergeSource(BaseModel):
+    source_names: list[str] = []
+    source_codes: list[str] = []
+
+
+class AttendanceMergeInstruction(BaseModel):
+    final_employee_name: str
+    final_employee_code: Optional[str] = None
+    sources: AttendanceEmployeeMergeSource
+    adjustments: Optional[EmployeePayableAdjustment] = None
+
+
+class AttendanceMergeRequest(BaseModel):
+    sheet_name: str
+    merge_instructions: list[AttendanceMergeInstruction] = []
+    dry_run: bool = False
 
 
 class AttendanceStatusSummary(BaseModel):

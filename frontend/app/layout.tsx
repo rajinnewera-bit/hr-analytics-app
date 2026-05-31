@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Finance Analyst",
-  description: "Upload Excel or CSV files to the backend."
+  title: "Bath & Sanitary | HR Analytics Platform",
+  description: "Stylt Group HR analytics platform for attendance processing, employee master, and payroll-ready operations.",
 };
 
 export default function RootLayout({

@@ -5,7 +5,7 @@ from time import perf_counter
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app.config import ALLOWED_FILE_TYPES
-from app.schemas.upload import AttendanceReviewRequest, UploadResponse
+from app.schemas.upload import AttendanceReviewRequest, AttendanceMergeRequest, UploadResponse
 from app.services.file_storage import delete_uploaded_file, load_uploaded_file, save_uploaded_file
 from app.services.file_preview import build_file_preview
 
@@ -191,3 +191,60 @@ async def review_attendance_exceptions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unexpected server error while applying attendance review decisions.",
         ) from exc
+
+
+@router.post("/upload/{upload_id}/attendance-merge", response_model=UploadResponse)
+async def apply_attendance_merge(
+    upload_id: str,
+    merge_request: AttendanceMergeRequest,
+) -> UploadResponse:
+    upload_metadata = load_uploaded_file(upload_id)
+    selected_sheet = merge_request.sheet_name or "CSV Data"
+    logger.info(
+        "Attendance merge requested upload_id=%s sheet=%s merge_instructions=%s",
+        upload_id,
+        selected_sheet,
+        len(merge_request.merge_instructions),
+    )
+    started_at = perf_counter()
+    try:
+        from app.services.file_preview import build_file_preview_with_merges
+
+        response = build_file_preview_with_merges(
+            file_path=Path(upload_metadata["file_path"]),
+            original_file_name=upload_metadata["original_file_name"],
+            extension=upload_metadata["extension"],
+            upload_id=upload_metadata["upload_id"],
+            analysis_type=upload_metadata.get("analysis_type", "Auto Detect"),
+            selected_sheet=selected_sheet,
+            merge_instructions=merge_request.merge_instructions,
+            dry_run=merge_request.dry_run,
+            message="Attendance merge preview generated successfully." if merge_request.dry_run else "Attendance merge applied successfully.",
+        )
+        logger.info(
+            "Attendance merge completed in %.2fs upload_id=%s sheet=%s merge_count=%s",
+            perf_counter() - started_at,
+            upload_id,
+            selected_sheet,
+            len(merge_request.merge_instructions),
+        )
+        return response
+    except HTTPException as exc:
+        logger.warning(
+            "Attendance merge failed upload_id=%s sheet=%s detail=%s",
+            upload_id,
+            selected_sheet,
+            exc.detail,
+        )
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Attendance merge crashed unexpectedly upload_id=%s sheet=%s",
+            upload_id,
+            selected_sheet,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected server error while applying attendance merge.",
+        ) from exc
+

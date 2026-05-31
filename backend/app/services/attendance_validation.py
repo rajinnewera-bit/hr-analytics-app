@@ -25,6 +25,9 @@ from app.schemas.upload import (
     AttendanceStructureSummary,
     AttendanceValidationSummary,
 )
+from app.schemas.upload import (
+    AttendanceMergeInstruction,
+)
 from app.services.attendance_anomaly import detect_attendance_anomalies
 from app.services.attendance_classification import classify_attendance_records
 from app.services.attendance_ingestion import (
@@ -32,6 +35,7 @@ from app.services.attendance_ingestion import (
     AttendanceNormalizedRecord,
     ingest_attendance_dataframe,
 )
+from app.services.attendance_merge_workflow import apply_employee_merges
 from app.services.attendance_payroll import (
     apply_monthly_payroll_reconciliation,
     build_employee_monthly_summary,
@@ -132,6 +136,182 @@ def build_empty_attendance_validation_summary() -> AttendanceValidationSummary:
         employee_monthly_summary=[],
         unit_summary=[],
         processed_attendance_rows=[],
+    )
+
+
+def build_attendance_validation_summary_with_merges(
+    dataframe: pd.DataFrame,
+    structure_preparation: Optional[AttendanceSheetPreparation] = None,
+    merge_instructions: Optional[list[AttendanceMergeInstruction]] = None,
+    review_decisions: Optional[list[AttendanceReviewDecision]] = None,
+    policy_rules: Optional[list[AttendancePolicyRule]] = None,
+    holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
+    administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+) -> AttendanceValidationSummary:
+    """
+    Build attendance validation summary with optional employee merge workflow.
+
+    This function:
+    1. Ingests attendance data.
+    2. Applies employee merges (if provided) to consolidate multiple identities.
+    3. Continues with anomaly detection, review workflow, classification, and payroll.
+    4. All existing business logic (late, irregular, comp-off, payable-days) is preserved.
+
+    Args:
+        dataframe: Raw attendance DataFrame.
+        structure_preparation: Optional structure metadata.
+        merge_instructions: Optional list of employee merge instructions.
+        review_decisions: Optional HR review decisions.
+        policy_rules: Optional policy rules for attendance classification.
+        holiday_markers: Optional holiday markers.
+        administrative_exceptions: Optional administrative exceptions.
+
+    Returns:
+        AttendanceValidationSummary with all processing complete, including merged data.
+    """
+    ingestion_result = ingest_attendance_dataframe(
+        dataframe,
+        structure_preparation=structure_preparation,
+    )
+
+    # Apply employee merges if provided.
+    records_after_merge = apply_employee_merges(
+        ingestion_result.records,
+        merge_instructions or [],
+    )
+
+    # Continue with the rest of the pipeline unchanged.
+    merged_policy_rules = merge_attendance_policy_rules(policy_rules)
+    marked_holidays = _normalize_holiday_markers(holiday_markers)
+    normalized_administrative_exceptions = _normalize_administrative_exceptions(
+        administrative_exceptions
+    )
+    records_with_holidays = _apply_marked_holidays(records_after_merge, marked_holidays)
+    records_with_exceptions = _apply_administrative_exceptions(
+        records_with_holidays,
+        normalized_administrative_exceptions,
+    )
+    anomaly_result = detect_attendance_anomalies(records_with_exceptions)
+    review_result = apply_attendance_review_workflow(
+        records_with_exceptions,
+        anomaly_result.exception_groups,
+        decisions=review_decisions,
+    )
+    classification_result = classify_attendance_records(
+        review_result.resolved_records,
+        merged_policy_rules,
+    )
+    apply_monthly_payroll_reconciliation(classification_result.processed_rows)
+
+    structure_summary = _build_structure_summary(ingestion_result.structure_preparation)
+    detected_columns = _build_detected_columns(ingestion_result.mapped_columns)
+    missing_dates = _missing_date_issues(ingestion_result.records)
+    duplicate_dates = _duplicate_date_issues(review_result.exception_groups)
+    blank_work_descriptions = (
+        _blank_work_description_issues(review_result.resolved_records)
+        if ingestion_result.processing_mode == "timesheet"
+        else []
+    )
+    missing_remarks = (
+        _missing_remark_issues(review_result.resolved_records)
+        if ingestion_result.processing_mode == "timesheet"
+        else []
+    )
+    daily_activity_gaps = (
+        _daily_activity_gap_issues(review_result.resolved_records)
+        if ingestion_result.processing_mode == "timesheet"
+        else []
+    )
+    location_coverage = _location_coverage(review_result.resolved_records)
+    total_entries_per_month = _monthly_entries(review_result.resolved_records)
+    monthly_consistency = _monthly_consistency(review_result.resolved_records)
+    employee_activity_summary, employee_activity_message = _employee_activity(review_result.resolved_records)
+    employee_monthly_summary = build_employee_monthly_summary(classification_result.processed_rows)
+    unit_summary = build_unit_summary(classification_result.processed_rows)
+    processing_summary = _processing_summary(
+        ingestion_result=ingestion_result,
+        resolved_records=review_result.resolved_records,
+        exception_groups=review_result.exception_groups,
+        processed_rows=classification_result.processed_rows,
+    )
+
+    error_group_count = len([group for group in review_result.exception_groups if group.severity == "error"])
+    warning_group_count = len([group for group in review_result.exception_groups if group.severity == "warning"])
+    invalid_source_rows = {
+        candidate.source_row_number
+        for group in review_result.exception_groups
+        for candidate in group.candidate_rows
+    }
+    invalid_source_rows.update(issue.row_number for issue in missing_dates)
+    total_rows = len(ingestion_result.records)
+    total_invalid_rows = min(len(invalid_source_rows), total_rows)
+    total_valid_rows = max(total_rows - total_invalid_rows, 0)
+
+    warnings_count = (
+        len(structure_summary.warnings)
+        + warning_group_count
+        + len(blank_work_descriptions)
+        + len(missing_remarks)
+        + len(daily_activity_gaps)
+        + len(monthly_consistency)
+    )
+    errors_count = len(ingestion_result.missing_required_columns) + error_group_count + len(missing_dates)
+
+    if errors_count > 0:
+        status = "error"
+    elif warnings_count > 0:
+        status = "warning"
+    else:
+        status = "valid"
+
+    sorted_dates = sorted(
+        {
+            record.date_value.strftime("%Y-%m-%d")
+            for record in review_result.resolved_records
+            if record.date_value is not None
+        }
+    )
+    working_day_labels = [
+        label
+        for label, _ in Counter(
+            record.day_label
+            for record in review_result.resolved_records
+            if record.day_label
+        ).most_common()
+    ]
+
+    return AttendanceValidationSummary(
+        status=status,
+        total_valid_rows=total_valid_rows,
+        total_invalid_rows=total_invalid_rows,
+        warnings_count=warnings_count,
+        errors_count=errors_count,
+        processing_mode=ingestion_result.processing_mode,
+        missing_required_columns=ingestion_result.missing_required_columns,
+        structure_summary=structure_summary,
+        policy_rules=merged_policy_rules,
+        processing_summary=processing_summary,
+        exception_groups=review_result.exception_groups,
+        detected_columns=detected_columns,
+        working_days_count=len(sorted_dates),
+        working_day_labels=working_day_labels,
+        date_range_start=sorted_dates[0] if sorted_dates else "",
+        date_range_end=sorted_dates[-1] if sorted_dates else "",
+        missing_dates=missing_dates,
+        duplicate_dates=duplicate_dates,
+        blank_work_descriptions=blank_work_descriptions,
+        missing_remarks=missing_remarks,
+        daily_activity_gaps=daily_activity_gaps,
+        location_coverage=location_coverage,
+        total_entries_per_month=total_entries_per_month,
+        monthly_consistency=monthly_consistency,
+        employee_activity_message=employee_activity_message,
+        employee_activity_summary=employee_activity_summary,
+        marked_holidays=marked_holidays,
+        administrative_exceptions=normalized_administrative_exceptions,
+        employee_monthly_summary=employee_monthly_summary,
+        unit_summary=unit_summary,
+        processed_attendance_rows=classification_result.processed_rows,
     )
 
 
