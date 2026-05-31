@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
@@ -9,8 +9,8 @@ import { AttendanceVerificationReviewDialog } from "@/components/attendance-veri
 import { AttendanceVerificationSummarySection } from "@/components/attendance-verification-summary-section";
 import { EmployeeMasterResetDialog } from "@/components/employee-master-reset-dialog";
 import { PageHeader } from "@/components/page-header";
+import { useUploadWorkspace } from "@/context/upload-workspace-context";
 import { employeeCodeToParam } from "@/lib/employee-code-url";
-import { loadAttendanceSnapshot } from "@/lib/attendance-snapshot";
 import {
   buildAttendanceVerificationRegistry,
   displayCategoryBadgeClassName,
@@ -54,11 +54,11 @@ import {
 
 export function EmployeeMasterPanel() {
   const router = useRouter();
+  const { result } = useUploadWorkspace();
   const [employees, setEmployees] = useState<EmployeeMasterRecord[]>([]);
   const [salaryComponents, setSalaryComponents] = useState<SalaryComponent[]>(
     DEFAULT_SALARY_COMPONENTS
   );
-  const [attendanceRows, setAttendanceRows] = useState<AttendanceProcessedRow[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -81,10 +81,10 @@ export function EmployeeMasterPanel() {
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [verificationActionMessage, setVerificationActionMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const refreshAttendanceSnapshot = useCallback(() => {
-    setAttendanceRows(loadAttendanceSnapshot());
-  }, []);
+  const attendanceRows = useMemo<AttendanceProcessedRow[]>(
+    () => result?.attendance_validation_summary?.processed_attendance_rows ?? [],
+    [result]
+  );
 
   useEffect(() => {
     let active = true;
@@ -116,22 +116,11 @@ export function EmployeeMasterPanel() {
       }
     };
 
-    refreshAttendanceSnapshot();
     void loadState();
-
-    const onStorage = (event: StorageEvent) => {
-      if (!event.key || event.key.includes("attendance_snapshot")) {
-        refreshAttendanceSnapshot();
-      }
-    };
-    window.addEventListener("storage", onStorage);
-    const intervalId = window.setInterval(refreshAttendanceSnapshot, 4000);
     return () => {
       active = false;
-      window.removeEventListener("storage", onStorage);
-      window.clearInterval(intervalId);
     };
-  }, [refreshAttendanceSnapshot]);
+  }, []);
 
   const departmentOptions = useMemo(
     () =>

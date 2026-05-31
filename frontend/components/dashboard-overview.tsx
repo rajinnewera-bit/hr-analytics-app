@@ -3,15 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/page-header";
-import { loadAttendanceSnapshot } from "@/lib/attendance-snapshot";
 import { buildAttendanceVerificationRegistry } from "@/lib/attendance-verification-registry";
-import { loadUploadWorkspace } from "@/lib/upload-workspace-storage";
-import type { UploadResponse } from "@/types/upload";
 import { fetchAttendanceVerificationStoreApi } from "@/lib/attendance-verification-api";
 import { fetchEmployees } from "@/lib/employee-master-api";
+import { useUploadWorkspace } from "@/context/upload-workspace-context";
 
 export function DashboardOverview() {
-  const [uploadResult, setUploadResult] = useState<UploadResponse | null>(null);
+  const { result } = useUploadWorkspace();
   const [employeeCount, setEmployeeCount] = useState(0);
   const [activeCount, setActiveCount] = useState(0);
   const [attendanceMatchStats, setAttendanceMatchStats] = useState({
@@ -24,11 +22,9 @@ export function DashboardOverview() {
   });
 
   useEffect(() => {
-    const refresh = () => {
-      const attendanceRows = loadAttendanceSnapshot();
-      const upload = loadUploadWorkspace();
-      setUploadResult(upload);
+    const attendanceRows = result?.attendance_validation_summary?.processed_attendance_rows ?? [];
 
+    const refresh = () => {
       void (async () => {
         try {
           const [employees, verificationStore] = await Promise.all([
@@ -71,9 +67,9 @@ export function DashboardOverview() {
     refresh();
     const intervalId = window.setInterval(refresh, 5000);
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [result]);
 
-  const attendanceSummary = uploadResult?.attendance_validation_summary;
+  const attendanceSummary = result?.attendance_validation_summary;
   const exceptionCount = useMemo(() => {
     if (!attendanceSummary) {
       return 0;
@@ -142,14 +138,14 @@ export function DashboardOverview() {
             <p className="text-sm font-semibold uppercase tracking-[0.16em] text-teal-700">
               Attendance session
             </p>
-            {uploadResult ? (
+            {result ? (
               <div className="mt-4 space-y-2 text-sm text-slateText">
                 <p>
-                  <span className="font-semibold text-ink">Upload ID:</span> {uploadResult.upload_id}
+                  <span className="font-semibold text-ink">Upload ID:</span> {result.upload_id}
                 </p>
                 <p>
                   <span className="font-semibold text-ink">Sheet:</span>{" "}
-                  {uploadResult.selected_sheet || "-"}
+                  {result.selected_sheet || "-"}
                 </p>
                 <p>
                   <span className="font-semibold text-ink">Processed rows:</span>{" "}

@@ -8,7 +8,10 @@ import {
   analysisTypeOptions,
   useUploadWorkspace,
 } from "@/context/upload-workspace-context";
-import { loadUploadWorkspaceMeta } from "@/lib/upload-workspace-storage";
+import {
+  loadUploadWorkspaceMeta,
+  type UploadWorkspaceMeta,
+} from "@/lib/upload-workspace-storage";
 import { useEffect, useState } from "react";
 
 const acceptedExtensions = [".csv", ".xlsx"];
@@ -21,18 +24,19 @@ export function AttendanceUploadPanel() {
     isProcessing,
     result,
     errorMessage,
+    workspacePersistenceMessage,
     fileInputRef,
     handleFileChange,
     handleSubmit,
     handleCancelUpload,
+    handleStartNewUpload,
     handleSheetSelect,
     isSwitchingSheet,
     setAnalysisType,
   } = useUploadWorkspace();
 
-  const [uploadMeta, setUploadMeta] = useState<{ savedAt: string; uploadId: string } | null>(
-    null
-  );
+  const [uploadMeta, setUploadMeta] = useState<UploadWorkspaceMeta | null>(null);
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
 
   useEffect(() => {
     setUploadMeta(loadUploadWorkspaceMeta());
@@ -45,6 +49,34 @@ export function AttendanceUploadPanel() {
     }
   };
 
+  const hasExistingUploadState = Boolean(selectedFile || result || errorMessage || uploadMeta);
+  const hasActiveWorkbook = Boolean(result || uploadMeta);
+
+  useEffect(() => {
+    if (!hasActiveWorkbook) {
+      setShowReplaceConfirm(false);
+    }
+  }, [hasActiveWorkbook]);
+
+  const handleUploadNewFileClick = () => {
+    if (hasActiveWorkbook) {
+      setShowReplaceConfirm(true);
+      return;
+    }
+
+    if (hasExistingUploadState) {
+      handleStartNewUpload();
+      return;
+    }
+
+    fileInputRef.current?.click();
+  };
+
+  const confirmReplaceWorkbook = () => {
+    handleStartNewUpload();
+    setShowReplaceConfirm(false);
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <PageHeader
@@ -52,20 +84,77 @@ export function AttendanceUploadPanel() {
         title="Upload attendance workbook"
         description="Import the payroll workbook, preview detected sheets, and confirm analysis routing before moving into the working register."
         actions={
-          result ? (
-            <Link
-              href="/attendance/working"
-              className="inline-flex items-center justify-center rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleUploadNewFileClick}
+              disabled={isProcessing}
+              className="inline-flex items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Open Attendance Working
-            </Link>
-          ) : null
+              Upload New File
+            </button>
+            {result ? (
+              <Link
+                href="/attendance/working"
+                className="inline-flex items-center justify-center rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+              >
+                Open Attendance Working
+              </Link>
+            ) : null}
+          </div>
         }
       />
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
         <section className="rounded-[1.5rem] border border-white/70 bg-white/92 p-5 shadow-soft backdrop-blur">
           <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={handleUploadNewFileClick}
+                className="inline-flex items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-semibold text-rose-800 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Upload New File
+              </button>
+              {hasExistingUploadState ? (
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleStartNewUpload}
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Clear Current Selection
+                </button>
+              ) : null}
+            </div>
+
+            {showReplaceConfirm ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                <p className="text-sm font-semibold text-amber-900">
+                  Replacing the workbook will overwrite the current upload session. Continue?
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={confirmReplaceWorkbook}
+                    disabled={isProcessing}
+                    className="inline-flex items-center justify-center rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowReplaceConfirm(false)}
+                    disabled={isProcessing}
+                    className="inline-flex items-center justify-center rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <label
               htmlFor="file-upload"
               className={`flex flex-col items-center justify-center rounded-2xl border border-dashed border-teal-300 bg-teal-50/70 px-6 py-7 text-center transition ${
@@ -132,11 +221,26 @@ export function AttendanceUploadPanel() {
                   Cancel Upload
                 </button>
               ) : null}
+              {hasExistingUploadState ? (
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleUploadNewFileClick}
+                  className="inline-flex w-full items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 text-base font-semibold text-rose-800 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Replace File
+                </button>
+              ) : null}
             </div>
 
             {errorMessage ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                 {errorMessage}
+              </div>
+            ) : null}
+            {workspacePersistenceMessage ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {workspacePersistenceMessage}
               </div>
             ) : null}
           </form>
@@ -156,6 +260,16 @@ export function AttendanceUploadPanel() {
                 label="Engine"
                 value={result?.analysis_overview.engine ?? "pending"}
               />
+            </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={handleUploadNewFileClick}
+                className="inline-flex items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Upload New File
+              </button>
             </div>
           </section>
         ) : (

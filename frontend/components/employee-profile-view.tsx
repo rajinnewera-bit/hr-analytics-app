@@ -16,8 +16,8 @@ import {
   filterAttendanceRowsByEmployeeCode,
 } from "@/lib/attendance-employee-summary";
 import { HrmsBranding } from "@/components/hrms-branding";
+import { useUploadWorkspace } from "@/context/upload-workspace-context";
 import { employeeCodeToParam } from "@/lib/employee-code-url";
-import { loadAttendanceSnapshot } from "@/lib/attendance-snapshot";
 import {
   isValidDateText,
   SALARY_MODE_OPTIONS,
@@ -64,9 +64,9 @@ export function EmployeeProfileView({
   initialTab = "master",
 }: EmployeeProfileViewProps) {
   const router = useRouter();
+  const { result } = useUploadWorkspace();
   const [employees, setEmployees] = useState<EmployeeMasterRecord[]>([]);
   const [salaryComponents, setSalaryComponents] = useState<SalaryComponent[]>([]);
-  const [attendanceRows, setAttendanceRows] = useState<AttendanceProcessedRow[]>([]);
   const [mode, setMode] = useState<ProfileMode>(initialMode);
   const [tab, setTab] = useState<ProfileTab>(initialTab);
   const [draft, setDraft] = useState<EmployeeMasterRecord | null>(null);
@@ -75,6 +75,10 @@ export function EmployeeProfileView({
     aliases: [],
     decisions: [],
   });
+  const attendanceRows = useMemo<AttendanceProcessedRow[]>(
+    () => result?.attendance_validation_summary?.processed_attendance_rows ?? [],
+    [result]
+  );
 
   useEffect(() => {
     let active = true;
@@ -90,7 +94,6 @@ export function EmployeeProfileView({
         }
         setEmployees(employeeRows);
         setSalaryComponents(salaryRows);
-        setAttendanceRows(loadAttendanceSnapshot());
         setVerificationStore(verificationRows);
         setMode(initialMode);
         setTab(initialTab);
@@ -100,7 +103,6 @@ export function EmployeeProfileView({
         }
         setEmployees([]);
         setSalaryComponents([]);
-        setAttendanceRows(loadAttendanceSnapshot());
       }
     };
     void loadState();

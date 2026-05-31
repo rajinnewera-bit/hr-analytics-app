@@ -12,10 +12,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { saveAttendanceSnapshot } from "@/lib/attendance-snapshot";
+import {
+  clearAttendanceSnapshot,
+  saveAttendanceSnapshot,
+} from "@/lib/attendance-snapshot";
 import { normalizeUploadResponse } from "@/lib/upload-response";
 import {
-  loadUploadWorkspace,
+  clearUploadWorkspaceStorage,
+  loadUploadWorkspaceMeta,
   saveUploadWorkspace,
 } from "@/lib/upload-workspace-storage";
 import type {
@@ -57,9 +61,12 @@ async function parseApiResponse(response: Response) {
 
 function syncAttendanceSnapshotForEmployeeMaster(response: UploadResponse) {
   const rows = response.attendance_validation_summary?.processed_attendance_rows ?? [];
-  if (rows.length > 0) {
-    saveAttendanceSnapshot(rows);
-  }
+  return saveAttendanceSnapshot({
+    savedAt: new Date().toISOString(),
+    uploadId: response.upload_id,
+    selectedSheet: response.selected_sheet ?? "",
+    rowCount: rows.length,
+  });
 }
 
 function normalizeAnalysisType(value: string | null | undefined): AnalysisType {
@@ -91,6 +98,7 @@ type UploadWorkspaceContextValue = {
   activeResultTab: ResultTab;
   errorMessage: string | null;
   resultTabs: readonly (readonly [ResultTab, string])[];
+  workspacePersistenceMessage: string | null;
   apiBaseUrl: string;
   setActiveResultTab: (tab: ResultTab) => void;
   handleFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -108,6 +116,7 @@ type UploadWorkspaceContextValue = {
     instructions: AttendanceMergeInstruction[],
     dryRun: boolean
   ) => Promise<void>;
+  handleStartNewUpload: () => void;
   setAnalysisType: (value: AnalysisType) => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
 };
@@ -122,9 +131,11 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
   const [isUpdatingAttendance, setIsUpdatingAttendance] = useState(false);
   const [isMergingAttendance, setIsMergingAttendance] = useState(false);
   const [result, setResultState] = useState<UploadResponse | null>(null);
-  const [hydrated, setHydrated] = useState(false);
   const [activeResultTab, setActiveResultTab] = useState<ResultTab>("overview");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [workspacePersistenceMessage, setWorkspacePersistenceMessage] = useState<string | null>(
+    null
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isMountedRef = useRef(false);
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
@@ -138,9 +149,17 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const setResult = useCallback((next: UploadResponse | null) => {
     setResultState(next);
-    saveUploadWorkspace(next);
+    const workspaceSaveResult = saveUploadWorkspace(next);
+    const snapshotSaveResult = next
+      ? syncAttendanceSnapshotForEmployeeMaster(next)
+      : saveAttendanceSnapshot(null);
+    setWorkspacePersistenceMessage(
+      workspaceSaveResult.message ?? snapshotSaveResult.message ?? null
+    );
     if (next) {
-      syncAttendanceSnapshotForEmployeeMaster(next);
+      setActiveResultTab(
+        next.analysis_overview.engine === "generic" ? "overview" : "analysis"
+      );
     }
   }, []);
 
@@ -164,23 +183,67 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
 
   useEffect(() => {
-    const stored = loadUploadWorkspace();
-    if (stored) {
-      setResultState(stored);
-      setAnalysisType(normalizeAnalysisType(stored.analysis_type));
-      setActiveResultTab(
-        stored.analysis_overview.engine === "generic" ? "overview" : "analysis"
-      );
-    }
-    setHydrated(true);
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) {
+    const storedMeta = loadUploadWorkspaceMeta();
+    if (!storedMeta?.uploadId) {
       return;
     }
-    saveUploadWorkspace(result);
-  }, [hydrated, result]);
+
+    let active = true;
+    const controller = new AbortController();
+    const restoreWorkspace = async () => {
+      setAnalysisType(normalizeAnalysisType(storedMeta.analysisType));
+      setIsSwitchingSheet(true);
+      setWorkspacePersistenceMessage(null);
+
+      try {
+        const targetSheet = storedMeta.selectedSheet || "CSV Data";
+        const encodedSheetName = encodeURIComponent(targetSheet);
+        const response = await fetch(
+          `${apiBaseUrl}/upload/${storedMeta.uploadId}/sheet/${encodedSheetName}`,
+          { signal: controller.signal }
+        );
+        const data = await parseApiResponse(response);
+        if (!response.ok) {
+          throw new Error(
+            "detail" in data && data.detail
+              ? data.detail
+              : "Unable to restore the previous upload session."
+          );
+        }
+
+        if (!active) {
+          return;
+        }
+
+        const normalizedResponse = normalizeUploadResponse(data as Partial<UploadResponse>);
+        setResult(normalizedResponse);
+        setErrorMessage(null);
+        setAnalysisType(normalizeAnalysisType(normalizedResponse.analysis_type));
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setResultState(null);
+          clearUploadWorkspaceStorage();
+          clearAttendanceSnapshot();
+          setWorkspacePersistenceMessage(
+            "The previous upload session could not be restored. Upload the workbook again to continue."
+          );
+        }
+      } finally {
+        if (active) {
+          setIsSwitchingSheet(false);
+        }
+      }
+    };
+
+    void restoreWorkspace();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [apiBaseUrl, setResult]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -231,6 +294,27 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       fileInputRef.current.value = "";
     }
   };
+
+  const resetUploadWorkspace = useCallback(() => {
+    abortUpload("refresh");
+    abortSheetSwitch();
+    uploadRequestIdRef.current += 1;
+    sheetRequestIdRef.current += 1;
+    attendanceRequestIdRef.current += 1;
+    mergeRequestIdRef.current += 1;
+    setSelectedFile(null);
+    setResult(null);
+    setErrorMessage(null);
+    setActiveResultTab("overview");
+    setAnalysisType("Auto Detect");
+    setWorkspacePersistenceMessage(null);
+    setIsUploading(false);
+    setIsSwitchingSheet(false);
+    setIsUpdatingAttendance(false);
+    setIsMergingAttendance(false);
+    clearFileInput();
+    clearAttendanceSnapshot();
+  }, [setResult]);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     if (isProcessing) {
@@ -326,6 +410,10 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
     if (isMountedRef.current) {
       setIsUploading(false);
     }
+  };
+
+  const handleStartNewUpload = () => {
+    resetUploadWorkspace();
   };
 
   const handleSheetSelect = async (sheetName: string) => {
@@ -498,6 +586,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
     activeResultTab,
     errorMessage,
     resultTabs,
+    workspacePersistenceMessage,
     apiBaseUrl,
     setActiveResultTab,
     handleFileChange,
@@ -506,6 +595,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
     handleSheetSelect,
     handleAttendanceReviewUpdate,
     handleAttendanceMerge,
+    handleStartNewUpload,
     setAnalysisType,
     fileInputRef,
   };

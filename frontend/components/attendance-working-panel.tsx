@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AttendanceAnalysisCard } from "@/components/attendance-analysis-card";
 import { AttendanceExportCard } from "@/components/attendance-export-card";
 import { AttendanceMergeCard } from "@/components/attendance-merge-card";
@@ -19,15 +20,31 @@ export function AttendanceWorkingPanel() {
     activeResultTab,
     setActiveResultTab,
     resultTabs,
+    workspacePersistenceMessage,
     handleAttendanceReviewUpdate,
     handleAttendanceMerge,
+    handleStartNewUpload,
   } = useUploadWorkspace();
+  const router = useRouter();
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
 
   useEffect(() => {
     if (result?.analysis_overview.engine === "attendance") {
       setActiveResultTab("analysis");
     }
   }, [result, setActiveResultTab]);
+
+  useEffect(() => {
+    if (!result) {
+      setShowReplaceConfirm(false);
+    }
+  }, [result]);
+
+  const confirmReplaceWorkbook = () => {
+    handleStartNewUpload();
+    setShowReplaceConfirm(false);
+    router.push("/attendance/upload");
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -36,16 +53,55 @@ export function AttendanceWorkingPanel() {
         title="Payroll-ready attendance processing"
         description="Review punch exceptions, apply corrections, resolve merge candidates, and export the finalized working register."
         actions={
-          <Link
-            href="/attendance/upload"
-            className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-slate-50"
-          >
-            Back to Upload
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {result ? (
+              <button
+                type="button"
+                onClick={() => setShowReplaceConfirm(true)}
+                className="inline-flex items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800 transition hover:border-rose-300 hover:bg-rose-100"
+              >
+                Replace Workbook
+              </button>
+            ) : null}
+            <Link
+              href="/attendance/upload"
+              className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-slate-50"
+            >
+              Back to Upload
+            </Link>
+          </div>
         }
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {workspacePersistenceMessage ? (
+          <section className="mb-4 rounded-[1.5rem] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
+            {workspacePersistenceMessage}
+          </section>
+        ) : null}
+        {showReplaceConfirm ? (
+          <section className="mb-4 rounded-[1.5rem] border border-amber-200 bg-amber-50 p-5 shadow-sm">
+            <p className="text-sm font-semibold text-amber-900">
+              Replacing the workbook will overwrite the current upload session. Continue?
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={confirmReplaceWorkbook}
+                className="inline-flex items-center justify-center rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700"
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowReplaceConfirm(false)}
+                className="inline-flex items-center justify-center rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        ) : null}
         {!result ? (
           <section className="rounded-[1.5rem] border border-dashed border-slate-300 bg-white/90 p-8 text-center shadow-sm">
             <p className="text-lg font-semibold text-ink">No attendance session loaded</p>
