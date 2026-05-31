@@ -11,9 +11,10 @@ export type EmployeeMasterRecord = {
   unit: UnitName;
   doj: string;
   gross_monthly_salary: number;
-  casual_leave_balance: number;
-  sick_leave_balance: number;
-  earned_leave_balance: number;
+  opening_leave_balance: number;
+  leave_accrued: number;
+  leave_availed: number;
+  closing_leave_balance: number;
   comp_off_balance: number;
   status: EmployeeStatus;
 };

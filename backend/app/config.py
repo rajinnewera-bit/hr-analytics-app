@@ -3,6 +3,7 @@ from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", BACKEND_DIR / "uploads")).resolve()
+APP_DB_PATH = Path(os.getenv("APP_DB_PATH", BACKEND_DIR / "hr_analytics.sqlite3")).resolve()
 
 ALLOWED_FILE_TYPES = {
     ".csv": "csv",

@@ -107,103 +107,98 @@ Important note:
 - This is backend-backed upload/session file handling
 - It is not yet a general HRMS data persistence layer for employee master or verification
 
+### 1.5 Employee Master Persistence
+
+Implemented backend APIs:
+
+- `GET /employees`
+- `POST /employees`
+- `POST /employees/bulk-upsert`
+- `GET /employees/{employee_code}`
+- `PUT /employees/{employee_code}`
+- `DELETE /employees/{employee_code}`
+- `DELETE /employees`
+
+What this covers:
+
+- employee listing
+- employee create
+- employee update
+- employee delete
+- employee master bulk sync
+- backend persistence of leave/comp-off balances using the current leave design
+
+Relevant files:
+
+- `backend/app/routes/employees.py`
+- `backend/app/services/employee_master_service.py`
+- `backend/app/db.py`
+- `backend/app/schemas/hr_master.py`
+
+### 1.6 Salary Component Persistence
+
+Implemented backend APIs:
+
+- `GET /salary-components`
+- `PUT /salary-components`
+
+What this covers:
+
+- global salary component loading
+- salary component persistence for current Employee Master screens
+
+Relevant files:
+
+- `backend/app/routes/employees.py`
+- `backend/app/services/employee_master_service.py`
+
+### 1.7 Attendance Verification Persistence
+
+Implemented backend APIs:
+
+- `GET /attendance-verification/store`
+- `POST /attendance-verification/approve`
+- `POST /attendance-verification/reject`
+- `POST /attendance-verification/alias`
+- `GET /attendance-verification/history/{employee_code}`
+
+What this covers:
+
+- persisted alias mapping
+- persisted approval/rejection decisions
+- shared verification store loading
+- employee-level verification history
+
+Relevant files:
+
+- `backend/app/routes/attendance_verification.py`
+- `backend/app/services/attendance_verification_service.py`
+- `backend/app/db.py`
+- `backend/app/schemas/hr_master.py`
+
 ## 2. Frontend-Only Modules
 
 These areas are currently not persisted through backend APIs or database models.
 
-### 2.1 Employee Master
+### 2.1 Dashboard Composition
 
 Current persistence mode:
 
-- `localStorage`
-
-What is frontend-only:
-
-- employee records
-- employee profile edits
-- salary component settings
-- employee import into master
-- employee delete/reset operations
-
-Frontend storage implementation:
-
-- `frontend/lib/employee-master-storage.ts`
-
-Key local storage keys:
-
-- `hr_analytics_employee_master_v1`
-- `hr_analytics_salary_components_v1`
-
-Screens affected:
-
-- `frontend/app/(hrms)/employees/page.tsx`
-- `frontend/app/(hrms)/employees/[code]/page.tsx`
-- `frontend/app/(hrms)/employees/new/page.tsx`
-- `frontend/components/employee-master-panel.tsx`
-- `frontend/components/employee-create-view.tsx`
-- `frontend/components/employee-profile-view.tsx`
-
-### 2.2 Attendance Verification
-
-Current persistence mode:
-
-- `localStorage`
-
-What is frontend-only:
-
-- verification reviewer name
-- alias creation
-- manual approval decisions
-- rejection decisions
-- verification history
-
-Frontend storage implementation:
-
-- `frontend/lib/attendance-verification-storage.ts`
-
-Key local storage keys:
-
-- `hr_analytics_attendance_verification_v1`
-- `hr_analytics_verification_reviewer_v1`
-
-Frontend-derived registry implementation:
-
-- `frontend/lib/attendance-verification-registry.ts`
-
-Important note:
-
-- verification status is currently computed in the browser by combining:
-  - Employee Master from `localStorage`
-  - attendance snapshot from `localStorage`
-  - verification store from `localStorage`
-
-Screens affected:
-
-- `frontend/components/attendance-verification-summary-section.tsx`
-- `frontend/components/attendance-verification-review-dialog.tsx`
-- `frontend/components/attendance-verification-drilldown-dialog.tsx`
-- `frontend/components/employee-master-panel.tsx`
-- `frontend/components/employee-profile-view.tsx`
-
-### 2.3 Dashboard Composition
-
-Current persistence mode:
-
-- hybrid frontend-only composition
+- hybrid composition
 
 The dashboard currently reads:
 
 - upload workspace from `sessionStorage`
 - attendance snapshot from `localStorage`
-- Employee Master from `localStorage`
-- Attendance Verification store from `localStorage`
+- Employee Master from backend APIs
+- Attendance Verification store from backend APIs
 
 Storage helpers involved:
 
 - `frontend/lib/upload-workspace-storage.ts`
 - `frontend/lib/attendance-snapshot.ts`
-- `frontend/lib/employee-master-storage.ts`
-- `frontend/lib/attendance-verification-storage.ts`
+- `frontend/lib/employee-master-api.ts`
+- `frontend/lib/attendance-verification-api.ts`
 
 Dashboard implementation:
 
@@ -211,13 +206,34 @@ Dashboard implementation:
 
 Important note:
 
-- the dashboard is not backed by its own API
-- it does not read Employee Master or Verification from the backend
-- it is only as complete as the browser-local state on the current device/session
+- the dashboard is still not backed by its own summary API
+- it remains partly browser-session-driven because attendance upload workspace is still session based
+- employee/verification data is no longer frontend-only
+
+### 2.2 Frontend Cache Mirrors
+
+These are still present, but they are no longer the primary source of truth.
+
+Current mode:
+
+- browser cache mirror for compatibility
+
+What remains frontend-local:
+
+- upload workspace session snapshot
+- attendance snapshot cache
+- verification reviewer display name
+
+Relevant files:
+
+- `frontend/lib/upload-workspace-storage.ts`
+- `frontend/lib/attendance-snapshot.ts`
+- `frontend/lib/attendance-verification-storage.ts`
+- `frontend/lib/employee-master-storage.ts`
 
 ## 3. APIs That Already Exist
 
-Current backend API surface is limited and clearly scoped.
+Current backend API surface now includes both attendance processing and HRMS persistence APIs.
 
 ### Upload and Attendance Processing APIs
 
@@ -244,6 +260,29 @@ Backend route files:
 - `backend/app/routes/upload.py`
 - `backend/app/main.py`
 
+### Employee Master APIs
+
+- `GET /employees`
+- `POST /employees`
+- `POST /employees/bulk-upsert`
+- `GET /employees/{employee_code}`
+- `PUT /employees/{employee_code}`
+- `DELETE /employees/{employee_code}`
+- `DELETE /employees`
+
+### Salary Component APIs
+
+- `GET /salary-components`
+- `PUT /salary-components`
+
+### Attendance Verification APIs
+
+- `GET /attendance-verification/store`
+- `POST /attendance-verification/approve`
+- `POST /attendance-verification/reject`
+- `POST /attendance-verification/alias`
+- `GET /attendance-verification/history/{employee_code}`
+
 ### Existing Backend Schemas
 
 The backend already exposes rich Pydantic response/request models for attendance workflow data, including:
@@ -266,47 +305,7 @@ Relevant file:
 
 These are the missing backend APIs required to make Employee Master, Attendance Verification, and Dashboard fully persisted and multi-user safe.
 
-### 4.1 Employee Master APIs
-
-Missing:
-
-- `GET /employees`
-- `POST /employees`
-- `GET /employees/{employee_code}`
-- `PUT /employees/{employee_code}`
-- `DELETE /employees/{employee_code}`
-
-Optional but recommended:
-
-- `POST /employees/import`
-- `GET /employees/units`
-- `GET /employees/departments`
-
-### 4.2 Salary Component / Payroll Settings APIs
-
-Missing:
-
-- `GET /salary-components`
-- `PUT /salary-components`
-
-These are currently stored only in browser localStorage.
-
-### 4.3 Attendance Verification APIs
-
-Missing:
-
-- `GET /attendance-verification`
-- `POST /attendance-verification/decision`
-- `POST /attendance-verification/alias`
-- `GET /attendance-verification/history/{employee_code}`
-- `GET /attendance-verification/summary`
-
-Optional but recommended:
-
-- `DELETE /attendance-verification/alias/{alias_id}`
-- `DELETE /attendance-verification/decision/{decision_id}`
-
-### 4.4 Dashboard APIs
+### 4.1 Dashboard APIs
 
 Missing:
 
@@ -316,7 +315,7 @@ Missing:
 
 Right now the dashboard computes these values in the frontend instead of requesting a unified backend summary.
 
-### 4.5 Persisted Upload Workspace Retrieval APIs
+### 4.2 Persisted Upload Workspace Retrieval APIs
 
 Currently the backend can continue a workflow by `upload_id`, but there is no general API for listing or restoring historical HR workspaces across users.
 
@@ -330,13 +329,13 @@ These are optional for the next phase, but useful if multi-session operational c
 
 ## 5. Database Models Still Missing
 
-There are currently no backend database models in this repository for the HRMS layer.
+Core HRMS persistence models are now implemented in the backend SQLite layer.
 
-### 5.1 Employee Master Models
+### 5.1 Implemented Persistence Tables
 
-Needed:
+Implemented:
 
-- `Employee`
+- `employees`
   - employee_code
   - employee_name
   - department
@@ -345,35 +344,21 @@ Needed:
   - unit
   - doj
   - gross_monthly_salary
+  - opening_leave_balance
+  - leave_accrued
+  - leave_availed
+  - closing_leave_balance
+  - comp_off_balance
   - status
 
-- `EmployeeLeaveBalance`
-  - employee reference
-  - casual leave balance
-  - sick leave balance
-  - earned leave balance
-  - comp off balance
-
-### 5.2 Salary Component Models
-
-Needed:
-
-- `SalaryComponent`
-  - component identifier
-  - component name
+- `salary_components`
+  - id
+  - component_name
   - percentage
-  - active flag
+  - active
+  - sort_order
 
-Depending on final design:
-
-- global salary structure model
-- or unit/company-level payroll settings model
-
-### 5.3 Attendance Verification Models
-
-Needed:
-
-- `AttendanceVerificationAlias`
+- `attendance_verification_aliases`
   - employee_code
   - attendance_name
   - normalized_attendance_name
@@ -381,7 +366,7 @@ Needed:
   - created_by
   - created_at
 
-- `AttendanceVerificationDecision`
+- `attendance_verification_decisions`
   - employee_code
   - attendance_name
   - master_name
@@ -391,7 +376,7 @@ Needed:
   - actor
   - acted_at
 
-### 5.4 Optional Audit / Workspace Models
+### 5.2 Optional Audit / Workspace Models Still Missing
 
 Recommended for stronger auditability:
 
@@ -426,15 +411,14 @@ Screens:
 Current reality:
 
 - fully functional frontend experience
-- no backend CRUD support
-- all data stored in browser localStorage
-- not shared across users/devices
+- backend CRUD support now exists
+- persisted in backend
+- shared across users/devices using the same backend
 
 Gap:
 
-- backend Employee Master API
-- backend persistence
-- backend salary component persistence
+- no major CRUD gap remains
+- optional future import audit/history could be added
 
 ### Attendance Verification Screens
 
@@ -448,14 +432,13 @@ Screens:
 Current reality:
 
 - fully functional frontend workflow
-- review outcomes saved only in browser localStorage
-- registry built entirely in the browser
+- review outcomes now saved through backend APIs
+- registry is still computed in the browser, but from backend-persisted store data
 
 Gap:
 
-- backend alias persistence
-- backend decision persistence
-- shared reviewer audit history
+- no core persistence gap remains
+- optional dedicated backend verification summary endpoint could still be added
 
 ### Dashboard
 
@@ -467,38 +450,34 @@ Current reality:
 
 - shows useful summaries
 - attendance session portion depends on uploaded backend response cached in sessionStorage
-- employee/verification stats depend on frontend-local stores
+- employee/verification stats now come from backend APIs
 
 Gap:
 
 - backend dashboard API
-- backend-backed employee and verification summary source
 - cross-device consistency
 
 ## 7. Recommended Next Development Phase
 
 Recommended next phase:
 
-### Phase: Backend Persistence for Employee Master + Attendance Verification
+### Phase: Backend Dashboard and Workspace Persistence
 
-This should be the next development phase before expanding the dashboard further.
+This should be the next development phase now that Employee Master and Verification persistence are in place.
 
 Recommended order:
 
-1. Add backend Employee Master data models and CRUD APIs
-2. Add backend Salary Component settings model/API
-3. Add backend Attendance Verification alias/decision models and APIs
-4. Replace frontend localStorage writes with API-backed persistence in:
-   - `employee-master-storage.ts`
-   - `attendance-verification-storage.ts`
-5. Refactor dashboard overview to consume backend-backed employee/verification summaries
+1. Add a backend dashboard summary API
+2. Add persisted upload-workspace/session tracking if required across users/devices
+3. Reduce reliance on browser cache mirrors where safe
+4. Add optional audit/history views for employee changes and verification activity
 
 Why this phase should come next:
 
 - the attendance/payroll engine is already backend-backed and rich
-- the HRMS screens already exist
-- the largest remaining product gap is not UI, but persistence and shared operational state
-- without this phase, Employee Master and Verification remain single-browser features
+- Employee Master persistence is now in place
+- Attendance Verification persistence is now in place
+- the remaining gap is aggregated operational state and cross-session workspace continuity
 
 ### What should remain unchanged in that phase
 
@@ -515,17 +494,14 @@ To minimize risk, the next phase should preserve:
 Current system status:
 
 - Attendance processing is backend-backed.
-- Employee Master is frontend-only.
-- Attendance Verification is frontend-only.
-- Dashboard is partially backend-fed and partially browser-derived.
+- Employee Master is backend-backed.
+- Attendance Verification is backend-backed.
+- Dashboard is still partially browser-derived because upload workspace/session state is not yet a dedicated backend module.
 
-The backend is already strong where payroll-attendance processing is concerned.
+The backend is now strong for both payroll-attendance processing and core HRMS persistence.
 
-The missing implementation layer is the HRMS persistence layer for:
+The main remaining implementation gap is:
 
-- employee records
-- salary settings
-- verification aliases
-- verification decisions
-- backend-derived dashboard summaries across users/devices
-
+- backend-derived dashboard summaries
+- multi-session upload workspace persistence
+- deeper audit/reporting surfaces on top of persisted HRMS data

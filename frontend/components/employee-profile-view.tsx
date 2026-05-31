@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AttendanceProcessedRow } from "@/types/upload";
 import type { EmployeeMasterRecord, SalaryComponent } from "@/types/employee-master";
+import type { AttendanceVerificationStore } from "@/types/attendance-verification";
 import {
   buildAttendanceVerificationRegistry,
   displayCategoryBadgeClassName,
@@ -19,10 +20,6 @@ import { employeeCodeToParam } from "@/lib/employee-code-url";
 import { loadAttendanceSnapshot } from "@/lib/attendance-snapshot";
 import {
   isValidDateText,
-  loadEmployeesFromStorage,
-  loadSalaryComponentsFromStorage,
-  saveEmployeesToStorage,
-  saveSalaryComponentsToStorage,
   SALARY_MODE_OPTIONS,
   toNumber,
   toSalaryMode,
@@ -31,8 +28,17 @@ import {
 } from "@/lib/employee-master-storage";
 import {
   getAliasesForEmployee,
-  loadAttendanceVerificationStore,
 } from "@/lib/attendance-verification-storage";
+import {
+  fetchAttendanceVerificationStoreApi,
+} from "@/lib/attendance-verification-api";
+import {
+  deleteEmployeeApi,
+  fetchEmployees,
+  fetchSalaryComponentsApi,
+  saveSalaryComponentsApi,
+  updateEmployeeApi,
+} from "@/lib/employee-master-api";
 
 type ProfileMode = "view" | "edit";
 type ProfileTab = "master" | "attendance" | "payroll" | "leave";
@@ -64,15 +70,43 @@ export function EmployeeProfileView({
   const [mode, setMode] = useState<ProfileMode>(initialMode);
   const [tab, setTab] = useState<ProfileTab>(initialTab);
   const [draft, setDraft] = useState<EmployeeMasterRecord | null>(null);
-  const [verificationStore, setVerificationStore] = useState(loadAttendanceVerificationStore);
+  const [verificationStore, setVerificationStore] = useState<AttendanceVerificationStore>({
+    version: 1,
+    aliases: [],
+    decisions: [],
+  });
 
   useEffect(() => {
-    setEmployees(loadEmployeesFromStorage());
-    setSalaryComponents(loadSalaryComponentsFromStorage());
-    setAttendanceRows(loadAttendanceSnapshot());
-    setVerificationStore(loadAttendanceVerificationStore());
-    setMode(initialMode);
-    setTab(initialTab);
+    let active = true;
+    const loadState = async () => {
+      try {
+        const [employeeRows, salaryRows, verificationRows] = await Promise.all([
+          fetchEmployees(),
+          fetchSalaryComponentsApi(),
+          fetchAttendanceVerificationStoreApi(),
+        ]);
+        if (!active) {
+          return;
+        }
+        setEmployees(employeeRows);
+        setSalaryComponents(salaryRows);
+        setAttendanceRows(loadAttendanceSnapshot());
+        setVerificationStore(verificationRows);
+        setMode(initialMode);
+        setTab(initialTab);
+      } catch {
+        if (!active) {
+          return;
+        }
+        setEmployees([]);
+        setSalaryComponents([]);
+        setAttendanceRows(loadAttendanceSnapshot());
+      }
+    };
+    void loadState();
+    return () => {
+      active = false;
+    };
   }, [employeeCode, initialMode, initialTab]);
 
   const employee = useMemo(
@@ -146,31 +180,42 @@ export function EmployeeProfileView({
       .concat(record)
       .sort((a, b) => a.employee_code.localeCompare(b.employee_code));
     setEmployees(next);
-    saveEmployeesToStorage(next);
-    saveSalaryComponentsToStorage(salaryComponents);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!draft.employee_code.trim() || !draft.employee_name.trim() || !isValidDateText(draft.doj)) {
       return;
     }
-    persistEmployee(draft);
-    if (draft.employee_code !== employeeCode) {
-      router.replace(`/employees/${employeeCodeToParam(draft.employee_code)}?mode=view`);
-    } else {
-      setMode("view");
+    try {
+      const [savedEmployee, savedSalaryComponents] = await Promise.all([
+        updateEmployeeApi(employeeCode, draft),
+        saveSalaryComponentsApi(salaryComponents),
+      ]);
+      persistEmployee(savedEmployee);
+      setSalaryComponents(savedSalaryComponents);
+      if (savedEmployee.employee_code !== employeeCode) {
+        router.replace(`/employees/${employeeCodeToParam(savedEmployee.employee_code)}?mode=view`);
+      } else {
+        setMode("view");
+      }
+    } catch {
+      return;
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     const confirmed = window.confirm("Are you sure you want to remove this employee record?");
     if (!confirmed) {
       return;
     }
-    const next = employees.filter((item) => item.employee_code !== employeeCode);
-    setEmployees(next);
-    saveEmployeesToStorage(next);
-    router.push("/employees");
+    try {
+      await deleteEmployeeApi(employeeCode);
+      const next = employees.filter((item) => item.employee_code !== employeeCode);
+      setEmployees(next);
+      router.push("/employees");
+    } catch {
+      return;
+    }
   };
 
   const tabs: { id: ProfileTab; label: string }[] = [
@@ -448,35 +493,46 @@ export function EmployeeMasterForm({
               <option value="Inactive">Inactive</option>
             </select>
           </Field>
-          <Field label="Casual Leave">
+          <Field label="Opening Leave Balance">
             <input
               type="number"
               step="0.5"
-              value={draft.casual_leave_balance}
+              value={draft.opening_leave_balance}
               onChange={(e) =>
-                setDraft({ ...draft, casual_leave_balance: toNumber(e.target.value) })
+                setDraft({ ...draft, opening_leave_balance: toNumber(e.target.value) })
               }
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
           </Field>
-          <Field label="Sick Leave">
+          <Field label="Leave Accrued">
             <input
               type="number"
               step="0.5"
-              value={draft.sick_leave_balance}
+              value={draft.leave_accrued}
               onChange={(e) =>
-                setDraft({ ...draft, sick_leave_balance: toNumber(e.target.value) })
+                setDraft({ ...draft, leave_accrued: toNumber(e.target.value) })
               }
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
           </Field>
-          <Field label="Earned Leave">
+          <Field label="Leave Availed">
             <input
               type="number"
               step="0.5"
-              value={draft.earned_leave_balance}
+              value={draft.leave_availed}
               onChange={(e) =>
-                setDraft({ ...draft, earned_leave_balance: toNumber(e.target.value) })
+                setDraft({ ...draft, leave_availed: toNumber(e.target.value) })
+              }
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+          </Field>
+          <Field label="Closing Leave Balance">
+            <input
+              type="number"
+              step="0.5"
+              value={draft.closing_leave_balance}
+              onChange={(e) =>
+                setDraft({ ...draft, closing_leave_balance: toNumber(e.target.value) })
               }
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
@@ -761,10 +817,11 @@ function LeaveTab({ draft }: { draft: EmployeeMasterRecord }) {
   return (
     <div className="space-y-4">
       <p className="text-sm font-semibold text-ink">Leave Summary</p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <ReadOnlyField label="Casual Leave" value={String(draft.casual_leave_balance)} />
-        <ReadOnlyField label="Sick Leave" value={String(draft.sick_leave_balance)} />
-        <ReadOnlyField label="Earned Leave" value={String(draft.earned_leave_balance)} />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <ReadOnlyField label="Opening Leave" value={String(draft.opening_leave_balance)} />
+        <ReadOnlyField label="Leave Accrued" value={String(draft.leave_accrued)} />
+        <ReadOnlyField label="Leave Availed" value={String(draft.leave_availed)} />
+        <ReadOnlyField label="Closing Leave" value={String(draft.closing_leave_balance)} />
         <ReadOnlyField label="Comp Off" value={String(draft.comp_off_balance)} />
       </div>
     </div>

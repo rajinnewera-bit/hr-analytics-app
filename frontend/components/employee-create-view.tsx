@@ -8,12 +8,14 @@ import { HrmsBranding } from "@/components/hrms-branding";
 import { employeeCodeToParam } from "@/lib/employee-code-url";
 import type { EmployeeMasterRecord, SalaryComponent } from "@/types/employee-master";
 import {
+  createEmployeeApi,
+  fetchEmployees,
+  fetchSalaryComponentsApi,
+  saveSalaryComponentsApi,
+} from "@/lib/employee-master-api";
+import {
   emptyEmployeeRecord,
   isValidDateText,
-  loadEmployeesFromStorage,
-  loadSalaryComponentsFromStorage,
-  saveEmployeesToStorage,
-  saveSalaryComponentsToStorage,
   suggestNextEmployeeCode,
 } from "@/lib/employee-master-storage";
 
@@ -26,10 +28,32 @@ export function EmployeeCreateView() {
   const [suggestedCode, setSuggestedCode] = useState("");
 
   useEffect(() => {
-    const loaded = loadEmployeesFromStorage();
-    setEmployees(loaded);
-    setSalaryComponents(loadSalaryComponentsFromStorage());
-    setSuggestedCode(suggestNextEmployeeCode(loaded));
+    let active = true;
+    const loadState = async () => {
+      try {
+        const [loadedEmployees, loadedSalaryComponents] = await Promise.all([
+          fetchEmployees(),
+          fetchSalaryComponentsApi(),
+        ]);
+        if (!active) {
+          return;
+        }
+        setEmployees(loadedEmployees);
+        setSalaryComponents(loadedSalaryComponents);
+        setSuggestedCode(suggestNextEmployeeCode(loadedEmployees));
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setSaveError(
+          error instanceof Error ? error.message : "Unable to load Employee Master.",
+        );
+      }
+    };
+    void loadState();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const activeComponents = useMemo(
@@ -37,7 +61,7 @@ export function EmployeeCreateView() {
     [salaryComponents]
   );
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaveError(null);
 
     const trimmedCode = draft.employee_code.trim();
@@ -67,12 +91,15 @@ export function EmployeeCreateView() {
       employee_name: trimmedName,
     };
 
-    const next = [...employees, record].sort((a, b) =>
-      a.employee_code.localeCompare(b.employee_code)
-    );
-    saveEmployeesToStorage(next);
-    saveSalaryComponentsToStorage(salaryComponents);
-    router.replace(`/employees/${employeeCodeToParam(normalizedCode)}`);
+    try {
+      await Promise.all([
+        createEmployeeApi(record),
+        saveSalaryComponentsApi(salaryComponents),
+      ]);
+      router.replace(`/employees/${employeeCodeToParam(normalizedCode)}`);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to save employee.");
+    }
   };
 
   return (

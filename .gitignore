@@ -12,5 +12,6 @@ frontend/.env.production.local
 backend/.venv
 backend/__pycache__
 backend/.env
+backend/hr_analytics.sqlite3
 backend/uploads/*
 !backend/uploads/.gitkeep

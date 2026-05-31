@@ -305,37 +305,49 @@ export function EmployeeDetailDrawer({
                     </select>
                   </label>
                   <label className="text-sm">
-                    <span className="mb-1 block font-medium text-slateText">Casual Leave</span>
+                    <span className="mb-1 block font-medium text-slateText">Opening Leave Balance</span>
                     <input
                       type="number"
                       step="0.5"
-                      value={draft.casual_leave_balance}
+                      value={draft.opening_leave_balance}
                       onChange={(e) =>
-                        setDraft({ ...draft, casual_leave_balance: toNumber(e.target.value) })
+                        setDraft({ ...draft, opening_leave_balance: toNumber(e.target.value) })
                       }
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-100"
                     />
                   </label>
                   <label className="text-sm">
-                    <span className="mb-1 block font-medium text-slateText">Sick Leave</span>
+                    <span className="mb-1 block font-medium text-slateText">Leave Accrued</span>
                     <input
                       type="number"
                       step="0.5"
-                      value={draft.sick_leave_balance}
+                      value={draft.leave_accrued}
                       onChange={(e) =>
-                        setDraft({ ...draft, sick_leave_balance: toNumber(e.target.value) })
+                        setDraft({ ...draft, leave_accrued: toNumber(e.target.value) })
                       }
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-100"
                     />
                   </label>
                   <label className="text-sm">
-                    <span className="mb-1 block font-medium text-slateText">Earned Leave</span>
+                    <span className="mb-1 block font-medium text-slateText">Leave Availed</span>
                     <input
                       type="number"
                       step="0.5"
-                      value={draft.earned_leave_balance}
+                      value={draft.leave_availed}
                       onChange={(e) =>
-                        setDraft({ ...draft, earned_leave_balance: toNumber(e.target.value) })
+                        setDraft({ ...draft, leave_availed: toNumber(e.target.value) })
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-100"
+                    />
+                  </label>
+                  <label className="text-sm">
+                    <span className="mb-1 block font-medium text-slateText">Closing Leave Balance</span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={draft.closing_leave_balance}
+                      onChange={(e) =>
+                        setDraft({ ...draft, closing_leave_balance: toNumber(e.target.value) })
                       }
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-100"
                     />
@@ -366,9 +378,10 @@ export function EmployeeDetailDrawer({
                     label="Gross Salary"
                     value={draft.gross_monthly_salary.toLocaleString("en-IN")}
                   />
-                  <ReadOnlyField label="Casual Leave" value={String(draft.casual_leave_balance)} />
-                  <ReadOnlyField label="Sick Leave" value={String(draft.sick_leave_balance)} />
-                  <ReadOnlyField label="Earned Leave" value={String(draft.earned_leave_balance)} />
+                  <ReadOnlyField label="Opening Leave" value={String(draft.opening_leave_balance)} />
+                  <ReadOnlyField label="Leave Accrued" value={String(draft.leave_accrued)} />
+                  <ReadOnlyField label="Leave Availed" value={String(draft.leave_availed)} />
+                  <ReadOnlyField label="Closing Leave" value={String(draft.closing_leave_balance)} />
                   <ReadOnlyField label="Comp Off" value={String(draft.comp_off_balance)} />
                 </div>
               )}

@@ -5,9 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { loadAttendanceSnapshot } from "@/lib/attendance-snapshot";
 import { buildAttendanceVerificationRegistry } from "@/lib/attendance-verification-registry";
-import { loadEmployeesFromStorage } from "@/lib/employee-master-storage";
 import { loadUploadWorkspace } from "@/lib/upload-workspace-storage";
 import type { UploadResponse } from "@/types/upload";
+import { fetchAttendanceVerificationStoreApi } from "@/lib/attendance-verification-api";
+import { fetchEmployees } from "@/lib/employee-master-api";
 
 export function DashboardOverview() {
   const [uploadResult, setUploadResult] = useState<UploadResponse | null>(null);
@@ -24,24 +25,47 @@ export function DashboardOverview() {
 
   useEffect(() => {
     const refresh = () => {
-      const employees = loadEmployeesFromStorage();
       const attendanceRows = loadAttendanceSnapshot();
       const upload = loadUploadWorkspace();
-
       setUploadResult(upload);
-      setEmployeeCount(employees.length);
-      setActiveCount(employees.filter((item) => item.status === "Active").length);
 
-      const registry = buildAttendanceVerificationRegistry(employees, attendanceRows);
-      const { summary } = registry;
-      setAttendanceMatchStats({
-        verified: summary.verified,
-        warning: summary.warning,
-        pendingReview: summary.pendingReview,
-        missing: summary.blocked,
-        payrollReady: summary.payrollReady,
-        payrollBlocked: summary.payrollBlocked,
-      });
+      void (async () => {
+        try {
+          const [employees, verificationStore] = await Promise.all([
+            fetchEmployees(),
+            fetchAttendanceVerificationStoreApi(),
+          ]);
+
+          setEmployeeCount(employees.length);
+          setActiveCount(employees.filter((item) => item.status === "Active").length);
+
+          const registry = buildAttendanceVerificationRegistry(
+            employees,
+            attendanceRows,
+            verificationStore,
+          );
+          const { summary } = registry;
+          setAttendanceMatchStats({
+            verified: summary.verified,
+            warning: summary.warning,
+            pendingReview: summary.pendingReview,
+            missing: summary.blocked,
+            payrollReady: summary.payrollReady,
+            payrollBlocked: summary.payrollBlocked,
+          });
+        } catch {
+          setEmployeeCount(0);
+          setActiveCount(0);
+          setAttendanceMatchStats({
+            verified: 0,
+            warning: 0,
+            pendingReview: 0,
+            missing: 0,
+            payrollReady: 0,
+            payrollBlocked: 0,
+          });
+        }
+      })();
     };
 
     refresh();

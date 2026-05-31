@@ -18,25 +18,18 @@ import {
 } from "@/lib/attendance-verification-registry";
 import { DRILL_DOWN_TITLES } from "@/lib/attendance-verification-registry-constants";
 import {
-  approveEmployeeMatch,
-  createAttendanceNameAlias,
-  loadAttendanceVerificationStore,
-  rejectEmployeeMatch,
-  saveAttendanceVerificationStore,
+  getVerificationActor,
 } from "@/lib/attendance-verification-storage";
 import type {
+  AttendanceVerificationStore,
   EmployeeVerificationRecord,
   VerificationDrillDownFilter,
 } from "@/types/attendance-verification";
 import {
   clearEmployeeMasterStorage,
   DEFAULT_SALARY_COMPONENTS,
-  loadEmployeesFromStorage,
-  loadSalaryComponentsFromStorage,
   mergeByEmployeeCode,
   parseRowsFromWorkbook,
-  saveEmployeesToStorage,
-  saveSalaryComponentsToStorage,
   toNumber,
 } from "@/lib/employee-master-storage";
 import type {
@@ -45,6 +38,19 @@ import type {
   SalaryComponent,
 } from "@/types/employee-master";
 import type { AttendanceProcessedRow } from "@/types/upload";
+import {
+  approveEmployeeMatchApi,
+  createAttendanceNameAliasApi,
+  fetchAttendanceVerificationStoreApi,
+  rejectEmployeeMatchApi,
+} from "@/lib/attendance-verification-api";
+import {
+  bulkUpsertEmployeesApi,
+  clearEmployeesApi,
+  fetchEmployees,
+  fetchSalaryComponentsApi,
+  saveSalaryComponentsApi,
+} from "@/lib/employee-master-api";
 
 export function EmployeeMasterPanel() {
   const router = useRouter();
@@ -66,7 +72,11 @@ export function EmployeeMasterPanel() {
   const [resetStep, setResetStep] = useState<1 | 2>(1);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [clearMessage, setClearMessage] = useState<string | null>(null);
-  const [verificationStore, setVerificationStore] = useState(loadAttendanceVerificationStore);
+  const [verificationStore, setVerificationStore] = useState<AttendanceVerificationStore>({
+    version: 1,
+    aliases: [],
+    decisions: [],
+  });
   const [drillDownFilter, setDrillDownFilter] = useState<VerificationDrillDownFilter | null>(null);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [verificationActionMessage, setVerificationActionMessage] = useState<string | null>(null);
@@ -77,21 +87,47 @@ export function EmployeeMasterPanel() {
   }, []);
 
   useEffect(() => {
-    setEmployees(loadEmployeesFromStorage());
-    setSalaryComponents(loadSalaryComponentsFromStorage());
+    let active = true;
+
+    const loadState = async () => {
+      try {
+        const [employeeRows, salaryRows, verificationRows] = await Promise.all([
+          fetchEmployees(),
+          fetchSalaryComponentsApi(),
+          fetchAttendanceVerificationStoreApi(),
+        ]);
+        if (!active) {
+          return;
+        }
+        setEmployees(employeeRows);
+        setSalaryComponents(
+          salaryRows.length > 0 ? salaryRows : DEFAULT_SALARY_COMPONENTS,
+        );
+        setVerificationStore(verificationRows);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Unable to load Employee Master data.",
+        );
+      }
+    };
+
     refreshAttendanceSnapshot();
+    void loadState();
 
     const onStorage = (event: StorageEvent) => {
       if (!event.key || event.key.includes("attendance_snapshot")) {
         refreshAttendanceSnapshot();
       }
-      if (!event.key || event.key.includes("attendance_verification")) {
-        setVerificationStore(loadAttendanceVerificationStore());
-      }
     };
     window.addEventListener("storage", onStorage);
     const intervalId = window.setInterval(refreshAttendanceSnapshot, 4000);
     return () => {
+      active = false;
       window.removeEventListener("storage", onStorage);
       window.clearInterval(intervalId);
     };
@@ -168,12 +204,7 @@ export function EmployeeMasterPanel() {
     setDrillDownFilter(filter);
   };
 
-  const persistVerificationStore = (nextStore: ReturnType<typeof loadAttendanceVerificationStore>) => {
-    saveAttendanceVerificationStore(nextStore);
-    setVerificationStore(nextStore);
-  };
-
-  const handleApproveMatch = (item: EmployeeVerificationRecord, remarks: string) => {
+  const handleApproveMatch = async (item: EmployeeVerificationRecord, remarks: string) => {
     if (!item.match.canManuallyApprove) {
       return;
     }
@@ -181,19 +212,25 @@ export function EmployeeMasterPanel() {
     if (!employee) {
       return;
     }
-    persistVerificationStore(
-      approveEmployeeMatch(verificationStore, {
+    try {
+      const nextStore = await approveEmployeeMatchApi({
         employeeCode: item.employeeCode,
         attendanceName: item.match.attendanceEmployeeName,
         masterName: employee.employee_name,
         remarks: remarks || "Manually approved by HR.",
-      })
-    );
-    setVerificationActionMessage(`Approved match for ${item.employeeCode}.`);
-    window.setTimeout(() => setVerificationActionMessage(null), 3000);
+        actor: getVerificationActor(),
+      });
+      setVerificationStore(nextStore);
+      setVerificationActionMessage(`Approved match for ${item.employeeCode}.`);
+      window.setTimeout(() => setVerificationActionMessage(null), 3000);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to approve verification match.",
+      );
+    }
   };
 
-  const handleRejectMatch = (item: EmployeeVerificationRecord, remarks: string) => {
+  const handleRejectMatch = async (item: EmployeeVerificationRecord, remarks: string) => {
     if (!item.match.canManuallyApprove) {
       return;
     }
@@ -201,19 +238,25 @@ export function EmployeeMasterPanel() {
     if (!employee) {
       return;
     }
-    persistVerificationStore(
-      rejectEmployeeMatch(verificationStore, {
+    try {
+      const nextStore = await rejectEmployeeMatchApi({
         employeeCode: item.employeeCode,
         attendanceName: item.match.attendanceEmployeeName,
         masterName: employee.employee_name,
         remarks: remarks || "Rejected by HR.",
-      })
-    );
-    setVerificationActionMessage(`Rejected match for ${item.employeeCode}.`);
-    window.setTimeout(() => setVerificationActionMessage(null), 3000);
+        actor: getVerificationActor(),
+      });
+      setVerificationStore(nextStore);
+      setVerificationActionMessage(`Rejected match for ${item.employeeCode}.`);
+      window.setTimeout(() => setVerificationActionMessage(null), 3000);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to reject verification match.",
+      );
+    }
   };
 
-  const handleCreateAlias = (item: EmployeeVerificationRecord, remarks: string) => {
+  const handleCreateAlias = async (item: EmployeeVerificationRecord, remarks: string) => {
     if (!item.match.canManuallyApprove) {
       return;
     }
@@ -221,24 +264,24 @@ export function EmployeeMasterPanel() {
     if (!employee) {
       return;
     }
-    let nextStore = createAttendanceNameAlias(verificationStore, {
-      employeeCode: item.employeeCode,
-      attendanceName: item.match.attendanceEmployeeName,
-      masterName: employee.employee_name,
-    });
-    if (remarks.trim()) {
-      nextStore = approveEmployeeMatch(nextStore, {
+    try {
+      const nextStore = await createAttendanceNameAliasApi({
         employeeCode: item.employeeCode,
         attendanceName: item.match.attendanceEmployeeName,
         masterName: employee.employee_name,
         remarks,
+        actor: getVerificationActor(),
       });
+      setVerificationStore(nextStore);
+      setVerificationActionMessage(
+        `Alias saved for ${item.employeeCode}. Future imports will auto-recognize this name.`
+      );
+      window.setTimeout(() => setVerificationActionMessage(null), 3500);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to save attendance alias.",
+      );
     }
-    persistVerificationStore(nextStore);
-    setVerificationActionMessage(
-      `Alias saved for ${item.employeeCode}. Future imports will auto-recognize this name.`
-    );
-    window.setTimeout(() => setVerificationActionMessage(null), 3500);
   };
 
   const onUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -254,7 +297,9 @@ export function EmployeeMasterPanel() {
         setErrorMessage("No valid employee rows found. Ensure Employee Code column exists.");
         return;
       }
-      setEmployees((prev) => mergeByEmployeeCode(prev, parsedRows));
+      const nextEmployees = mergeByEmployeeCode(employees, parsedRows);
+      const savedEmployees = await bulkUpsertEmployeesApi(nextEmployees);
+      setEmployees(savedEmployees);
       setMessage(
         `Employee Master synced successfully. ${parsedRows.length} row(s) processed using Employee Code as unique key.`
       );
@@ -293,24 +338,39 @@ export function EmployeeMasterPanel() {
       return;
     }
 
-    clearEmployeeMasterStorage();
-    setEmployees([]);
-    setErrorMessage(null);
-    setMessage(null);
-    setSaveMessage(null);
-    setClearMessage("Employee Master successfully cleared.");
-    closeResetDialog();
-    window.setTimeout(() => setClearMessage(null), 3000);
+    void (async () => {
+      try {
+        await clearEmployeesApi();
+        clearEmployeeMasterStorage();
+        setEmployees([]);
+        setErrorMessage(null);
+        setMessage(null);
+        setSaveMessage(null);
+        setClearMessage("Employee Master successfully cleared.");
+        closeResetDialog();
+        window.setTimeout(() => setClearMessage(null), 3000);
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Unable to clear Employee Master.",
+        );
+      }
+    })();
   };
 
-  const saveEmployeeMaster = () => {
+  const saveEmployeeMaster = async () => {
     try {
-      saveEmployeesToStorage(employees);
-      saveSalaryComponentsToStorage(salaryComponents);
+      const [savedEmployees, savedSalaryComponents] = await Promise.all([
+        bulkUpsertEmployeesApi(employees),
+        saveSalaryComponentsApi(salaryComponents),
+      ]);
+      setEmployees(savedEmployees);
+      setSalaryComponents(savedSalaryComponents);
       setSaveMessage("Employee Master saved successfully.");
       setTimeout(() => setSaveMessage(null), 2500);
-    } catch {
-      setErrorMessage("Failed to save Employee Master to local storage.");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to save Employee Master.",
+      );
     }
   };
 
@@ -324,9 +384,10 @@ export function EmployeeMasterPanel() {
       Unit: row.unit,
       DOJ: row.doj,
       "Gross Monthly Salary": row.gross_monthly_salary,
-      "Casual Leave Balance": row.casual_leave_balance,
-      "Sick Leave Balance": row.sick_leave_balance,
-      "Earned Leave Balance": row.earned_leave_balance,
+      "Opening Leave Balance": row.opening_leave_balance,
+      "Leave Accrued": row.leave_accrued,
+      "Leave Availed": row.leave_availed,
+      "Closing Leave Balance": row.closing_leave_balance,
       "Comp Off Balance": row.comp_off_balance,
       Status: row.status,
       ...Object.fromEntries(
@@ -353,9 +414,10 @@ export function EmployeeMasterPanel() {
         Unit: "Bath & Sanitary",
         DOJ: "2024-01-10",
         "Gross Salary": 30000,
-        "Casual Leave": 6,
-        "Sick Leave": 6,
-        "Earned Leave": 12,
+        "Opening Leave Balance": 12,
+        "Leave Accrued": 2,
+        "Leave Availed": 1,
+        "Closing Leave Balance": 13,
         "Comp Off": 0,
         Status: "Active",
       },

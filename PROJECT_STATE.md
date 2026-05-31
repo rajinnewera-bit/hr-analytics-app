@@ -107,9 +107,11 @@ Relevant files:
 - `frontend/components/hrms-branding.tsx`
 - `frontend/lib/hrms-nav.ts`
 
-### Employee Master UI Shell
+### Employee Master
 
 - Employee listing, create view, and profile view screens are present.
+- Backend persistence is now implemented for employee records, salary components, and leave/comp-off balances.
+- Frontend screens now use API-backed persistence instead of browser-only storage.
 
 Relevant files:
 
@@ -119,11 +121,17 @@ Relevant files:
 - `frontend/components/employee-master-panel.tsx`
 - `frontend/components/employee-create-view.tsx`
 - `frontend/components/employee-profile-view.tsx`
+- `backend/app/routes/employees.py`
+- `backend/app/services/employee_master_service.py`
+- `backend/app/db.py`
+- `backend/app/schemas/hr_master.py`
 
 ### Attendance Verification UX
 
 - Verification registry, review dialogs, and drilldown dialogs are present.
 - Matching/review experience exists in the frontend.
+- Backend persistence is now implemented for alias mapping and verification decisions.
+- Frontend verification actions now write through backend APIs.
 
 Relevant files:
 
@@ -132,6 +140,8 @@ Relevant files:
 - `frontend/components/attendance-verification-summary-section.tsx`
 - `frontend/components/attendance-verification-drilldown-dialog.tsx`
 - `frontend/components/attendance-verification-review-dialog.tsx`
+- `backend/app/routes/attendance_verification.py`
+- `backend/app/services/attendance_verification_service.py`
 
 ## 3. Attendance Business Rules Currently Implemented
 
@@ -203,20 +213,21 @@ Current rules are driven by `backend/app/services/attendance_rule_engine.py` and
 
 ## 4. Employee Master Status
 
-Employee Master is functionally present in the frontend, but it is not yet backend-persisted.
+Employee Master is now backend-persisted.
 
 Current status:
 
 - Employee list UI: implemented
 - Employee create UI: implemented
 - Employee profile view: implemented
-- Employee data persistence: frontend-local only
+- Employee data persistence: backend-backed
 
 Storage mode:
 
-- Uses browser/local storage
-- No backend CRUD API yet
-- No database-backed source of truth yet
+- Backend SQLite persistence layer
+- Frontend cache mirror is still maintained for continuity with current helper flows
+- CRUD API exists for employees
+- Salary component API exists
 
 Key files:
 
@@ -224,18 +235,23 @@ Key files:
 - `frontend/components/employee-create-view.tsx`
 - `frontend/components/employee-profile-view.tsx`
 - `frontend/lib/employee-master-storage.ts`
+- `frontend/lib/employee-master-api.ts`
+- `backend/app/routes/employees.py`
+- `backend/app/services/employee_master_service.py`
+- `backend/app/db.py`
 
 ## 5. Attendance Verification Status
 
-Attendance Verification UX is present, but persistence is still frontend-local.
+Attendance Verification UX is present and persistence is now backend-backed.
 
 Current status:
 
 - Verification registry: implemented
 - Verification review dialog: implemented
 - Verification drilldown dialog: implemented
-- Verification storage: browser/local storage only
-- No backend persistence or shared multi-user audit store yet
+- Verification storage: backend-backed
+- Alias mapping persistence: implemented
+- Verification decision persistence: implemented
 
 Key files:
 
@@ -244,6 +260,9 @@ Key files:
 - `frontend/components/attendance-verification-summary-section.tsx`
 - `frontend/components/attendance-verification-review-dialog.tsx`
 - `frontend/components/attendance-verification-drilldown-dialog.tsx`
+- `frontend/lib/attendance-verification-api.ts`
+- `backend/app/routes/attendance_verification.py`
+- `backend/app/services/attendance_verification_service.py`
 
 ## 6. Dashboard Status
 
@@ -257,13 +276,14 @@ Current status:
 - Employee summary surfaces: implemented
 - Current dashboard data source:
   - upload-session attendance snapshot
-  - frontend-local employee master state
-  - frontend-local verification state
+  - backend-backed employee master state
+  - backend-backed verification state
 
 Implication:
 
 - The dashboard is functional for the current session/workspace
-- It is not yet a fully shared, backend-persisted operational dashboard across users/devices
+- Employee Master and Verification portions are now shared across users/devices if the same backend is used
+- Attendance upload workspace itself is still session/browser driven
 
 Relevant files:
 
@@ -274,44 +294,25 @@ Relevant files:
 
 ## 7. Pending Modules
 
-### Backend Employee Master Persistence
-
-Needed:
-
-- employee CRUD API
-- backend storage for profile/master fields
-- salary component persistence
-- leave balance persistence
-- comp-off balance persistence if master-ledger ownership is required
-
-### Backend Attendance Verification Persistence
-
-Needed:
-
-- backend storage for verification decisions
-- backend storage for employee aliases/matching decisions
-- reviewer audit history persistence
-
 ### Shared Persistent Dashboard State
 
 Needed:
 
-- backend-backed employee master and verification state
-- dashboard computed from shared persisted HR data instead of browser-local stores
+- dashboard API if a single backend summary endpoint is desired
+- shared persisted attendance workspace/session model if uploads must survive beyond browser session semantics
 
 ### Production Hardening of HRMS Data Layer
 
 Needed:
 
 - multi-user persistence
-- stronger auditability of verification decisions
-- server-side reconciliation of employee master and verification context
+- stronger operational audit/reporting surfaces on top of persisted data
+- optional migration away from frontend cache mirrors once all screens use backend fetches exclusively
 
 ## 8. Known Limitations
 
-- Employee Master is not yet backend-persisted.
-- Attendance Verification decisions are not yet backend-persisted.
-- Dashboard state is not yet authoritative across devices/users.
+- Dashboard still depends on upload-session state stored in the browser for the active attendance workspace.
+- Frontend cache mirrors still exist for Employee Master and Verification helpers to preserve compatibility during transition.
 - Some attendance policy semantics are implemented differently from a stricter HR reading:
   - `3 late marks = 1 absent` is implemented as payroll deduction, not day-level absent conversion
   - after `12:00` and below `5` hours is not always absent; `3` to `<5` hours becomes `Half Day`
@@ -325,4 +326,3 @@ Needed:
 - Branch: `payroll-system-v2`
 - Last audited commit: `edfcb98dfe6a3dbcb8554c54e8edf870e9673d36`
 - Audit date: `2026-05-31`
-

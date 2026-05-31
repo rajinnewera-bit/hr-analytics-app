@@ -5,6 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import LAN_FRONTEND_ORIGIN_REGEX, LOCAL_FRONTEND_ORIGINS, UPLOADS_DIR
+from app.db import init_database
+from app.routes.attendance_verification import router as attendance_verification_router
+from app.routes.employees import router as employees_router
 from app.routes.upload import router as upload_router
 
 logging.basicConfig(
@@ -14,6 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+init_database()
 
 app = FastAPI(title="AI Finance Analyst Upload API")
 
@@ -27,6 +31,8 @@ app.add_middleware(
 )
 
 app.include_router(upload_router)
+app.include_router(employees_router)
+app.include_router(attendance_verification_router)
 
 
 @app.exception_handler(HTTPException)

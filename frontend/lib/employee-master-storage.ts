@@ -30,9 +30,10 @@ const HEADER_ALIASES: Record<keyof EmployeeMasterRecord, string[]> = {
   unit: ["unit", "businessunit", "branch"],
   doj: ["doj", "dateofjoining", "joiningdate"],
   gross_monthly_salary: ["grossmonthlysalary", "grosssalary", "monthlysalary", "salary"],
-  casual_leave_balance: ["casualleavebalance", "clbalance", "casualleave", "cl"],
-  sick_leave_balance: ["sickleavebalance", "slbalance", "sickleave", "sl"],
-  earned_leave_balance: ["earnedleavebalance", "elbalance", "earnedleave", "el"],
+  opening_leave_balance: ["openingleavebalance", "openingleave", "leaveopeningbalance"],
+  leave_accrued: ["leaveaccrued", "accruedleave", "leaveearned"],
+  leave_availed: ["leaveavailed", "availedleave", "leavetaken"],
+  closing_leave_balance: ["closingleavebalance", "closingleave", "leaveclosingbalance"],
   comp_off_balance: ["compoffbalance", "compoff", "coffbalance", "coff"],
   status: ["status", "activeinactivestatus", "employmentstatus"],
 };
@@ -139,9 +140,10 @@ export function emptyEmployeeRecord(): EmployeeMasterRecord {
     unit: "Bath & Sanitary",
     doj: "",
     gross_monthly_salary: 0,
-    casual_leave_balance: 0,
-    sick_leave_balance: 0,
-    earned_leave_balance: 0,
+    opening_leave_balance: 0,
+    leave_accrued: 0,
+    leave_availed: 0,
+    closing_leave_balance: 0,
     comp_off_balance: 0,
     status: "Active",
   };
@@ -179,7 +181,7 @@ export function parseRowsFromWorkbook(fileData: ArrayBuffer): EmployeeMasterReco
 
   const headerRow = rows[0] ?? [];
   const headerIndex = new Map<string, number>();
-  headerRow.forEach((header, idx) => {
+  headerRow.forEach((header: string | number | Date, idx: number) => {
     headerIndex.set(normalizeHeader(header), idx);
   });
 
@@ -202,15 +204,16 @@ export function parseRowsFromWorkbook(fileData: ArrayBuffer): EmployeeMasterReco
     unit: getColumnIndex("unit"),
     doj: getColumnIndex("doj"),
     gross_monthly_salary: getColumnIndex("gross_monthly_salary"),
-    casual_leave_balance: getColumnIndex("casual_leave_balance"),
-    sick_leave_balance: getColumnIndex("sick_leave_balance"),
-    earned_leave_balance: getColumnIndex("earned_leave_balance"),
+    opening_leave_balance: getColumnIndex("opening_leave_balance"),
+    leave_accrued: getColumnIndex("leave_accrued"),
+    leave_availed: getColumnIndex("leave_availed"),
+    closing_leave_balance: getColumnIndex("closing_leave_balance"),
     comp_off_balance: getColumnIndex("comp_off_balance"),
     status: getColumnIndex("status"),
   };
 
   const output: EmployeeMasterRecord[] = [];
-  rows.slice(1).forEach((row) => {
+  rows.slice(1).forEach((row: (string | number | Date)[]) => {
     const employeeCode = String(row[idx.employee_code] ?? "").trim();
     if (!employeeCode) {
       return;
@@ -225,9 +228,10 @@ export function parseRowsFromWorkbook(fileData: ArrayBuffer): EmployeeMasterReco
       unit: toUnit(row[idx.unit]),
       doj: excelDateToIso(row[idx.doj]),
       gross_monthly_salary: toNumber(row[idx.gross_monthly_salary]),
-      casual_leave_balance: toNumber(row[idx.casual_leave_balance]),
-      sick_leave_balance: toNumber(row[idx.sick_leave_balance]),
-      earned_leave_balance: toNumber(row[idx.earned_leave_balance]),
+      opening_leave_balance: toNumber(row[idx.opening_leave_balance]),
+      leave_accrued: toNumber(row[idx.leave_accrued]),
+      leave_availed: toNumber(row[idx.leave_availed]),
+      closing_leave_balance: toNumber(row[idx.closing_leave_balance]),
       comp_off_balance: toNumber(row[idx.comp_off_balance]),
       status: toStatus(row[idx.status]),
     });
