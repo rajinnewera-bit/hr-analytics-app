@@ -1,8 +1,14 @@
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Optional
 
 from app.schemas.upload import (
+    AttendanceCalculationBreakdown,
+    AttendanceCompOffLedgerItem,
+    AttendanceCompOffUsageTrailItem,
+    AttendanceEmployeeMonthlyExplainability,
     AttendanceEmployeeMonthlySummaryItem,
+    AttendanceLateDeductionExplanation,
     AttendanceProcessedRow,
     AttendanceStatusSummary,
     AttendanceUnitSummaryItem,
@@ -33,6 +39,23 @@ class EmployeeMonthReconciliation:
     comp_off_adjusted_days: float
     comp_off_balance_days: float
     comp_off_carry_forward_days: float
+    comp_off_usage_trail: list[AttendanceCompOffUsageTrailItem]
+    late_source_dates: list[str]
+    late_source_record_ids: list[str]
+
+
+@dataclass
+class CompOffSourceBalance:
+    source_kind: str
+    record_id: str
+    date: str
+    day_label: str
+    attendance_result: str
+    working_hours: str
+    reason: str
+    earned_value: float
+    available: float
+    row: Optional[AttendanceProcessedRow] = None
 
 
 def apply_monthly_payroll_reconciliation(
@@ -186,6 +209,12 @@ def build_employee_monthly_summary(
                     comp_off_balance_days=round(metrics.comp_off_balance_days, 2),
                     comp_off_carry_forward_days=round(metrics.comp_off_carry_forward_days, 2),
                     payable_days=round(metrics.final_payable_days, 2),
+                    explainability=_build_employee_month_explainability(
+                        month=month,
+                        rows=rows,
+                        status_summary=status_summary,
+                        metrics=metrics,
+                    ),
                 )
             )
 
@@ -278,36 +307,71 @@ def _reconcile_employee_month_rows(
     late_penalty_before = float(calculate_late_penalty_deductions(status_summary.late_entry_count))
     comp_off_rows = [row for row in rows if _is_comp_off_source(row)]
     absent_rows = [row for row in rows if row.final_status_code == "absent"]
+    late_rows = [row for row in rows if "late_entry" in row.derived_flags]
+    late_source_dates = [row.date for row in late_rows if row.date]
+    late_source_record_ids = [row.record_id for row in late_rows if row.record_id]
 
-    source_balances: list[list[object]] = []
+    source_balances: list[CompOffSourceBalance] = []
+    if opening_comp_off_balance > 0:
+        source_balances.append(
+            CompOffSourceBalance(
+                source_kind="carry_forward_balance",
+                record_id="carry_forward_balance",
+                date="",
+                day_label="",
+                attendance_result="Opening Comp Off Balance",
+                working_hours="",
+                reason="Comp off balance carried forward from a previous month.",
+                earned_value=round(opening_comp_off_balance, 2),
+                available=round(opening_comp_off_balance, 2),
+                row=None,
+            )
+        )
     for row in comp_off_rows:
         earned_value = _comp_off_value_for_row(row)
         row.comp_off_earned = earned_value
-        source_balances.append([row, earned_value])
+        source_balances.append(
+            CompOffSourceBalance(
+                source_kind="attendance_day",
+                record_id=row.record_id,
+                date=row.date,
+                day_label=row.day_label,
+                attendance_result=row.attendance_classification,
+                working_hours=row.working_hours,
+                reason=_build_comp_off_source_reason(row),
+                earned_value=earned_value,
+                available=earned_value,
+                row=row,
+            )
+        )
 
     total_comp_off_earned = round(sum(row.comp_off_earned for row in comp_off_rows), 2)
     total_available = round(opening_comp_off_balance + total_comp_off_earned, 2)
+    comp_off_usage_trail: list[AttendanceCompOffUsageTrailItem] = []
 
     absent_adjustment_target = min(total_available, float(len(absent_rows)))
     comp_off_adjusted_against_absent_days = _allocate_comp_off_adjustment(
         target_rows=absent_rows,
         adjustment_amount=absent_adjustment_target,
         source_balances=source_balances,
-        fallback_rows=absent_rows,
         label_prefix="Comp Off Adjusted",
         explanation_suffix="Comp off was applied against an absent day.",
+        adjustment_kind="absent",
+        adjustment_reason="Absent day",
+        usage_trail=comp_off_usage_trail,
     )
 
     remaining_available = round(total_available - comp_off_adjusted_against_absent_days, 2)
     late_adjustment_target = min(remaining_available, late_penalty_before)
-    late_rows = [row for row in rows if "late_entry" in row.derived_flags]
     comp_off_adjusted_against_late_days = _allocate_comp_off_adjustment(
         target_rows=late_rows,
         adjustment_amount=late_adjustment_target,
         source_balances=source_balances,
-        fallback_rows=late_rows or rows,
         label_prefix="Comp Off Late Adjustment",
         explanation_suffix="Comp off was applied against a late deduction.",
+        adjustment_kind="late_deduction",
+        adjustment_reason="Late deduction",
+        usage_trail=comp_off_usage_trail,
         track_late_deduction_adjustment=True,
     )
 
@@ -346,6 +410,9 @@ def _reconcile_employee_month_rows(
         comp_off_adjusted_days=total_adjusted,
         comp_off_balance_days=carry_forward_balance,
         comp_off_carry_forward_days=carry_forward_balance,
+        comp_off_usage_trail=comp_off_usage_trail,
+        late_source_dates=late_source_dates,
+        late_source_record_ids=late_source_record_ids,
     )
 
 
@@ -353,52 +420,214 @@ def _allocate_comp_off_adjustment(
     *,
     target_rows: list[AttendanceProcessedRow],
     adjustment_amount: float,
-    source_balances: list[list[object]],
-    fallback_rows: list[AttendanceProcessedRow],
+    source_balances: list[CompOffSourceBalance],
     label_prefix: str,
     explanation_suffix: str,
+    adjustment_kind: str,
+    adjustment_reason: str,
+    usage_trail: list[AttendanceCompOffUsageTrailItem],
     track_late_deduction_adjustment: bool = False,
 ) -> float:
     remaining = round(adjustment_amount, 2)
-    if remaining <= 0:
+    if remaining <= 0 or not target_rows:
         return 0.0
 
     applied = 0.0
+    target_capacities: list[float] = [1.0 for _ in target_rows]
+    target_index = 0
+
+    def advance_target_index(current_index: int) -> int:
+        next_index = current_index
+        while next_index < len(target_capacities) and target_capacities[next_index] <= 0:
+            next_index += 1
+        return next_index
+
+    target_index = advance_target_index(target_index)
     for source_balance in source_balances:
-        if remaining <= 0:
-            break
-        row = source_balance[0]
-        available = float(source_balance[1])
-        if available <= 0:
-            continue
-        allocation = min(available, remaining)
-        row.comp_off_adjusted = round(row.comp_off_adjusted + allocation, 2)
-        if track_late_deduction_adjustment:
-            row.late_deduction_adjusted = round(row.late_deduction_adjusted + allocation, 2)
-        source_balance[1] = round(available - allocation, 2)
-        row.payroll_impact_label = f"{label_prefix} ({row.comp_off_adjusted:.1f})"
-        row.rule_explanation = _append_note(row.rule_explanation, explanation_suffix)
-        applied = round(applied + allocation, 2)
-        remaining = round(remaining - allocation, 2)
+        while (
+            remaining > 0
+            and source_balance.available > 0
+            and target_index < len(target_rows)
+        ):
+            target_index = advance_target_index(target_index)
+            if target_index >= len(target_rows):
+                break
 
-    if remaining <= 0:
-        return applied
+            target_row = target_rows[target_index]
+            target_capacity = target_capacities[target_index]
+            allocation = min(source_balance.available, remaining, target_capacity)
+            if allocation <= 0:
+                target_index += 1
+                continue
 
-    recipients = fallback_rows or target_rows
-    recipient_index = 0
-    while remaining > 0 and recipients:
-        row = recipients[recipient_index % len(recipients)]
-        allocation = min(1.0, remaining)
-        row.comp_off_adjusted = round(row.comp_off_adjusted + allocation, 2)
-        if track_late_deduction_adjustment:
-            row.late_deduction_adjusted = round(row.late_deduction_adjusted + allocation, 2)
-        row.payroll_impact_label = f"{label_prefix} ({row.comp_off_adjusted:.1f})"
-        row.rule_explanation = _append_note(row.rule_explanation, explanation_suffix)
-        applied = round(applied + allocation, 2)
-        remaining = round(remaining - allocation, 2)
-        recipient_index += 1
+            if source_balance.row is not None:
+                source_balance.row.comp_off_adjusted = round(
+                    source_balance.row.comp_off_adjusted + allocation,
+                    2,
+                )
+                if track_late_deduction_adjustment:
+                    source_balance.row.late_deduction_adjusted = round(
+                        source_balance.row.late_deduction_adjusted + allocation,
+                        2,
+                    )
+                source_balance.row.payroll_impact_label = (
+                    f"{label_prefix} ({source_balance.row.comp_off_adjusted:.1f})"
+                )
+                source_balance.row.rule_explanation = _append_note(
+                    source_balance.row.rule_explanation,
+                    explanation_suffix,
+                )
+            else:
+                target_row.comp_off_adjusted = round(target_row.comp_off_adjusted + allocation, 2)
+                if track_late_deduction_adjustment:
+                    target_row.late_deduction_adjusted = round(
+                        target_row.late_deduction_adjusted + allocation,
+                        2,
+                    )
+                target_row.payroll_impact_label = (
+                    f"{label_prefix} ({target_row.comp_off_adjusted:.1f})"
+                )
+                target_row.rule_explanation = _append_note(
+                    target_row.rule_explanation,
+                    explanation_suffix,
+                )
+
+            source_balance.available = round(source_balance.available - allocation, 2)
+            target_capacities[target_index] = round(target_capacity - allocation, 2)
+            applied = round(applied + allocation, 2)
+            remaining = round(remaining - allocation, 2)
+
+            usage_trail.append(
+                AttendanceCompOffUsageTrailItem(
+                    source_kind=source_balance.source_kind,
+                    source_record_id=source_balance.record_id,
+                    source_date=source_balance.date,
+                    source_day_label=source_balance.day_label,
+                    source_attendance_result=source_balance.attendance_result,
+                    source_working_hours=source_balance.working_hours,
+                    source_reason=source_balance.reason,
+                    earned_value=round(source_balance.earned_value, 2),
+                    adjusted_record_id=target_row.record_id,
+                    adjusted_date=target_row.date,
+                    adjusted_day_label=target_row.day_label,
+                    adjusted_attendance_result=target_row.attendance_classification,
+                    adjusted_working_hours=target_row.working_hours,
+                    adjustment_value=round(allocation, 2),
+                    adjustment_kind=adjustment_kind,
+                    adjustment_reason=adjustment_reason,
+                    payroll_impact=_build_comp_off_payroll_impact(
+                        adjustment_kind,
+                        allocation,
+                    ),
+                )
+            )
+
+            if target_capacities[target_index] <= 0:
+                target_index += 1
 
     return applied
+
+
+def _build_employee_month_explainability(
+    *,
+    month: str,
+    rows: list[AttendanceProcessedRow],
+    status_summary: AttendanceStatusSummary,
+    metrics: EmployeeMonthReconciliation,
+) -> AttendanceEmployeeMonthlyExplainability:
+    late_cutoff_time = "10:11 AM"
+    calendar_days = len({row.date for row in rows if row.date})
+    comp_off_ledger = _build_comp_off_ledger(rows)
+    half_day_deduction_days = round(status_summary.half_day_count * 0.5, 2)
+
+    return AttendanceEmployeeMonthlyExplainability(
+        month=month,
+        calendar_days=calendar_days,
+        comp_off_ledger=comp_off_ledger,
+        comp_off_usage_trail=metrics.comp_off_usage_trail,
+        late_deduction=AttendanceLateDeductionExplanation(
+            late_rule_label="3 Late Flags = 1 Deduction",
+            late_cutoff_time=late_cutoff_time,
+            total_late_flags=status_summary.late_entry_count,
+            late_source_dates=metrics.late_source_dates,
+            late_source_record_ids=metrics.late_source_record_ids,
+            deductions_before_comp_off=round(metrics.late_penalty_before_comp_off, 2),
+            comp_off_adjusted_against_late_days=round(
+                metrics.comp_off_adjusted_against_late_days,
+                2,
+            ),
+            deductions_after_comp_off=round(metrics.late_penalty_after_comp_off, 2),
+            formula_text=(
+                f"{status_summary.late_entry_count} late flags ÷ 3 = "
+                f"{round(metrics.late_penalty_before_comp_off, 2)} deductions"
+            ),
+        ),
+        calculation_breakdown=AttendanceCalculationBreakdown(
+            calendar_days=calendar_days,
+            present_days=status_summary.present_count,
+            half_days=status_summary.half_day_count,
+            absent_days=status_summary.absent_count,
+            paid_week_off_days=status_summary.paid_week_off_count,
+            unpaid_week_off_days=status_summary.unpaid_week_off_count,
+            paid_holiday_days=status_summary.paid_holiday_count,
+            unpaid_holiday_days=status_summary.unpaid_holiday_count,
+            pending_review_days=status_summary.pending_review_count,
+            half_day_deduction_days=half_day_deduction_days,
+            gross_payable_days=round(metrics.gross_payable_days, 2),
+            late_penalty_before_comp_off=round(metrics.late_penalty_before_comp_off, 2),
+            late_penalty_after_comp_off=round(metrics.late_penalty_after_comp_off, 2),
+            comp_off_adjusted_against_absent_days=round(
+                metrics.comp_off_adjusted_against_absent_days,
+                2,
+            ),
+            comp_off_adjusted_against_late_days=round(
+                metrics.comp_off_adjusted_against_late_days,
+                2,
+            ),
+            final_payable_days=round(metrics.final_payable_days, 2),
+        ),
+    )
+
+
+def _build_comp_off_ledger(
+    rows: list[AttendanceProcessedRow],
+) -> list[AttendanceCompOffLedgerItem]:
+    ledger: list[AttendanceCompOffLedgerItem] = []
+    for row in rows:
+        if row.comp_off_earned <= 0:
+            continue
+        ledger.append(
+            AttendanceCompOffLedgerItem(
+                source_kind="attendance_day",
+                source_record_id=row.record_id,
+                source_date=row.date,
+                source_day_label=row.day_label,
+                source_attendance_result=row.attendance_classification,
+                source_working_hours=row.working_hours,
+                source_reason=_build_comp_off_source_reason(row),
+                earned_value=round(row.comp_off_earned, 2),
+                used_value=round(row.comp_off_adjusted, 2),
+                balance_value=round(max(row.comp_off_earned - row.comp_off_adjusted, 0.0), 2),
+            )
+        )
+
+    return ledger
+
+
+def _build_comp_off_source_reason(row: AttendanceProcessedRow) -> str:
+    if "worked_on_weekoff" in row.derived_flags:
+        return "Employee worked on a Sunday or weekly off."
+    if "worked_on_holiday" in row.derived_flags:
+        return "Employee worked on a holiday."
+    if row.hr_override_status.lower() == "comp off":
+        return "HR marked the day as a comp off credit."
+    return "Comp off credit was earned by an approved non-working-day attendance result."
+
+
+def _build_comp_off_payroll_impact(adjustment_kind: str, adjustment_value: float) -> str:
+    if adjustment_kind == "late_deduction":
+        return f"Late deduction reduced by {adjustment_value:.1f} day"
+    return f"Final payable increased by {adjustment_value:.1f} day"
 
 
 def _append_note(existing_text: str, extra_text: str) -> str:

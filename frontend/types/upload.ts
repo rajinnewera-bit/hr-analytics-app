@@ -248,6 +248,79 @@ export type AttendanceStatusSummary = {
   missing_punch_count: number;
 };
 
+export type AttendanceCompOffUsageTrailItem = {
+  source_kind: string;
+  source_record_id: string;
+  source_date: string;
+  source_day_label: string;
+  source_attendance_result: string;
+  source_working_hours: string;
+  source_reason: string;
+  earned_value: number;
+  adjusted_record_id: string;
+  adjusted_date: string;
+  adjusted_day_label: string;
+  adjusted_attendance_result: string;
+  adjusted_working_hours: string;
+  adjustment_value: number;
+  adjustment_kind: string;
+  adjustment_reason: string;
+  payroll_impact: string;
+};
+
+export type AttendanceCompOffLedgerItem = {
+  source_kind: string;
+  source_record_id: string;
+  source_date: string;
+  source_day_label: string;
+  source_attendance_result: string;
+  source_working_hours: string;
+  source_reason: string;
+  earned_value: number;
+  used_value: number;
+  balance_value: number;
+};
+
+export type AttendanceLateDeductionExplanation = {
+  late_rule_label: string;
+  late_cutoff_time: string;
+  total_late_flags: number;
+  late_source_dates: string[];
+  late_source_record_ids: string[];
+  deductions_before_comp_off: number;
+  comp_off_adjusted_against_late_days: number;
+  deductions_after_comp_off: number;
+  formula_text: string;
+};
+
+export type AttendanceCalculationBreakdown = {
+  calendar_days: number;
+  present_days: number;
+  half_days: number;
+  absent_days: number;
+  paid_week_off_days: number;
+  unpaid_week_off_days: number;
+  paid_holiday_days: number;
+  unpaid_holiday_days: number;
+  pending_review_days: number;
+  half_day_deduction_days: number;
+  gross_payable_days: number;
+  late_penalty_before_comp_off: number;
+  late_penalty_after_comp_off: number;
+  comp_off_adjusted_against_absent_days: number;
+  comp_off_adjusted_against_late_days: number;
+  final_payable_days: number;
+};
+
+export type AttendanceEmployeeMonthlyExplainability = {
+  month: string;
+  calendar_days: number;
+  comp_off_ledger: AttendanceCompOffLedgerItem[];
+  comp_off_usage_trail: AttendanceCompOffUsageTrailItem[];
+  late_deduction: AttendanceLateDeductionExplanation;
+  calculation_breakdown: AttendanceCalculationBreakdown;
+};
+
 export type AttendanceEmployeeMonthlySummaryItem = {
   employee_name: string;
   employee_id: string;
@@ -276,6 +349,7 @@ export type AttendanceEmployeeMonthlySummaryItem = {
   comp_off_balance_days: number;
   comp_off_carry_forward_days: number;
   payable_days: number;
+  explainability?: AttendanceEmployeeMonthlyExplainability | null;
 };
 
 export type AttendanceUnitSummaryItem = {

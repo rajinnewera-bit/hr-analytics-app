@@ -697,6 +697,15 @@ class AttendanceEngineTests(unittest.TestCase):
         self.assertEqual(monthly_summary[0].absent_count, 1)
         self.assertEqual(monthly_summary[0].gross_payable_days, 2.0)
         self.assertEqual(monthly_summary[0].payable_days, 3.0)
+        self.assertEqual(len(monthly_summary[0].explainability.comp_off_usage_trail), 1)
+        self.assertEqual(
+            monthly_summary[0].explainability.comp_off_usage_trail[0].adjusted_date,
+            "2026-04-08",
+        )
+        self.assertEqual(
+            monthly_summary[0].explainability.comp_off_usage_trail[0].source_date,
+            "2026-04-12",
+        )
 
     def test_status_summary_reconciles_without_double_counting_flags(self):
         processed_rows = classify_attendance_records(
@@ -988,6 +997,11 @@ class AttendanceEngineTests(unittest.TestCase):
         self.assertEqual(monthly_summary.comp_off_adjusted_against_late_days, 1.0)
         self.assertEqual(monthly_summary.gross_payable_days, 4.0)
         self.assertEqual(monthly_summary.payable_days, 4.0)
+        self.assertEqual(monthly_summary.explainability.late_deduction.total_late_flags, 3)
+        self.assertEqual(
+            monthly_summary.explainability.comp_off_usage_trail[0].adjustment_kind,
+            "late_deduction",
+        )
 
     def test_unused_comp_off_carries_forward_when_month_has_no_pending_deductions(self):
         processed_rows = classify_attendance_records(
