@@ -2692,10 +2692,11 @@ function CalculationBreakdownPanel({
                           ? `${trailItem.source_attendance_result} • ${trailItem.source_reason}`
                           : "Opening comp off balance carried forward from the previous month."
                       }
-                      body={`Adjusted Against ${formatShortDate(trailItem.adjusted_date)} • ${trailItem.adjustment_reason} • Payroll Impact: ${humanizePayrollImpact(trailItem.payroll_impact)}`}
+                      body={`${describeCompOffAdjustedAgainstExplanation(trailItem)} • Payroll Impact: ${humanizePayrollImpact(trailItem.payroll_impact)}`}
                       badges={[
                         `Earned: ${formatMetricValue(trailItem.earned_value)}`,
                         `Used Now: ${formatMetricValue(trailItem.adjustment_value)}`,
+                        `Adjusted Against: ${describeCompOffAdjustedAgainst(trailItem)}`,
                         trailItem.source_working_hours ? `Hours: ${trailItem.source_working_hours}` : "Carry Forward"
                       ]}
                     />
@@ -2835,9 +2836,10 @@ function MetricExplainabilityDialog({
                     key={`${trailItem.source_record_id || trailItem.source_kind}-${trailItem.adjusted_record_id}-${index}`}
                     title={`Comp Off Earned On: ${trailItem.source_date ? formatShortDate(trailItem.source_date) : "Opening Balance"}`}
                     subtitle={trailItem.source_reason || "Comp off credit was available to use."}
-                    body={`Adjusted Against: ${formatShortDate(trailItem.adjusted_date)} • Reason: ${trailItem.adjustment_reason} • Payroll Impact: ${humanizePayrollImpact(trailItem.payroll_impact)}`}
+                    body={`${describeCompOffAdjustedAgainstExplanation(trailItem)} • Payroll Impact: ${humanizePayrollImpact(trailItem.payroll_impact)}`}
                     badges={[
                       `Used: ${formatMetricValue(trailItem.adjustment_value)}`,
+                      `Adjusted Against: ${describeCompOffAdjustedAgainst(trailItem)}`,
                       trailItem.source_working_hours ? `Hours: ${trailItem.source_working_hours}` : "Carry Forward"
                     ]}
                   />
@@ -4229,6 +4231,55 @@ function humanizePayrollImpact(value: string) {
     return "+1 Payable Day (late deduction offset)";
   }
   return value;
+}
+
+function hasTraceableCompOffTarget(trailItem: {
+  source_record_id?: string;
+  source_date?: string;
+  adjusted_record_id?: string;
+  adjusted_date?: string;
+}) {
+  const adjustedRecordId = (trailItem.adjusted_record_id || "").trim();
+  const adjustedDate = (trailItem.adjusted_date || "").trim();
+  if (!adjustedRecordId || !adjustedDate) {
+    return false;
+  }
+  return !(
+    adjustedRecordId === (trailItem.source_record_id || "").trim() &&
+    adjustedDate === (trailItem.source_date || "").trim()
+  );
+}
+
+function describeCompOffAdjustedAgainst(
+  trailItem: {
+    source_record_id?: string;
+    source_date?: string;
+    adjusted_record_id?: string;
+    adjusted_date?: string;
+    adjustment_reason?: string;
+  }
+) {
+  if (!hasTraceableCompOffTarget(trailItem)) {
+    return "Not available from current calculation data";
+  }
+
+  return `${formatShortDate(trailItem.adjusted_date || "")} • ${trailItem.adjustment_reason || "Payroll offset"}`;
+}
+
+function describeCompOffAdjustedAgainstExplanation(
+  trailItem: {
+    source_record_id?: string;
+    source_date?: string;
+    adjusted_record_id?: string;
+    adjusted_date?: string;
+    adjustment_reason?: string;
+  }
+) {
+  if (!hasTraceableCompOffTarget(trailItem)) {
+    return "The payroll engine applied comp off adjustment, but the exact offset date is not exposed in the current calculation data.";
+  }
+
+  return `Adjusted Against: ${formatShortDate(trailItem.adjusted_date || "")} • Reason: ${trailItem.adjustment_reason || "Payroll offset"}`;
 }
 
 function buildFinalPayableStory(

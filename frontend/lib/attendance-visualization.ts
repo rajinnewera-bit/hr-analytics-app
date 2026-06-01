@@ -756,7 +756,12 @@ function deriveEmployeeMonthlyExplainability(
 
   const compOffUsageTrail: AttendanceCompOffUsageTrailItem[] = [];
   const absentTargets = sortedRows
-    .filter((row) => row.comp_off_adjusted > 0)
+    .filter(
+      (row) =>
+        row.comp_off_adjusted > 0 &&
+        row.comp_off_earned <= 0 &&
+        row.final_status_code === "absent"
+    )
     .map((row) => ({
       row,
       adjustment_value: roundNumber(row.comp_off_adjusted),
@@ -811,6 +816,82 @@ function deriveEmployeeMonthlyExplainability(
       });
     }
   });
+
+  const exactAbsentAllocation = roundNumber(
+    absentTargets.reduce((sum, target) => sum + target.adjustment_value, 0)
+  );
+  const exactLateAllocation = roundNumber(
+    lateTargets.reduce((sum, target) => sum + target.adjustment_value, 0)
+  );
+  const unresolvedAbsentAllocation = roundNumber(
+    Math.max(metrics.comp_off_adjusted_against_absent_days - exactAbsentAllocation, 0)
+  );
+  const unresolvedLateAllocation = roundNumber(
+    Math.max(metrics.comp_off_adjusted_against_late_days - exactLateAllocation, 0)
+  );
+
+  function appendUnavailableUsageTrail(
+    adjustmentValue: number,
+    adjustmentKind: "absent_offset" | "late_offset",
+    adjustmentReason: string,
+    payrollImpact: string
+  ) {
+    let remaining = roundNumber(adjustmentValue);
+    if (remaining <= 0) {
+      return;
+    }
+
+    for (const sourceBalance of sourceBalances) {
+      if (remaining <= 0) {
+        break;
+      }
+      if (sourceBalance.remaining_value <= 0) {
+        continue;
+      }
+      const allocation = roundNumber(
+        Math.min(sourceBalance.remaining_value, remaining)
+      );
+      if (allocation <= 0) {
+        continue;
+      }
+      sourceBalance.remaining_value = roundNumber(
+        sourceBalance.remaining_value - allocation
+      );
+      remaining = roundNumber(remaining - allocation);
+      compOffUsageTrail.push({
+        source_kind: sourceBalance.source_kind,
+        source_record_id: sourceBalance.source_record_id,
+        source_date: sourceBalance.source_date,
+        source_day_label: sourceBalance.source_day_label,
+        source_attendance_result: sourceBalance.source_attendance_result,
+        source_working_hours: sourceBalance.source_working_hours,
+        source_reason: sourceBalance.source_reason,
+        earned_value: sourceBalance.earned_value,
+        adjusted_record_id: "",
+        adjusted_date: "",
+        adjusted_day_label: "",
+        adjusted_attendance_result: "",
+        adjusted_working_hours: "",
+        adjustment_value: allocation,
+        adjustment_kind: adjustmentKind,
+        adjustment_reason: adjustmentReason,
+        payroll_impact: payrollImpact,
+      });
+    }
+  }
+
+  appendUnavailableUsageTrail(
+    unresolvedAbsentAllocation,
+    "absent_offset",
+    "Absent Day Offset",
+    "Final payable increased by 1.0 day"
+  );
+  appendUnavailableUsageTrail(
+    unresolvedLateAllocation,
+    "late_offset",
+    "Late Deduction Offset",
+    "Late deduction reduced by 1.0 day"
+  );
 
   const compOffLedger: AttendanceCompOffLedgerItem[] = sourceBalances.map((sourceBalance) => ({
     source_kind: sourceBalance.source_kind,
