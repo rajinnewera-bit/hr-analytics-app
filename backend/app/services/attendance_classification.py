@@ -9,6 +9,7 @@ from app.services.attendance_ingestion import AttendanceNormalizedRecord
 from app.services.attendance_rule_engine import rule_hours, rule_time, rule_tokens
 
 FEMALE_TOKENS = {"female", "f", "woman", "women", "lady"}
+EARLY_LOGIN_CUTOFF = time(hour=10, minute=0)
 
 
 @dataclass
@@ -149,6 +150,7 @@ def _classify_record(
     worked_hours = record.work_duration_hours
     suppress_discipline_flags = (is_week_off or is_explicit_holiday) and not no_punches
     derived_flags = _build_derived_flags(
+        in_time=record.in_time.time() if record.in_time is not None else None,
         is_late=is_late,
         is_overnight=is_overnight,
         worked_hours=worked_hours,
@@ -647,6 +649,7 @@ def _has_valid_punch(record: AttendanceNormalizedRecord) -> bool:
 
 def _build_derived_flags(
     *,
+    in_time: Optional[time],
     is_late: bool,
     is_overnight: bool,
     worked_hours: Optional[float],
@@ -659,6 +662,8 @@ def _build_derived_flags(
 ) -> list[str]:
     flags: list[str] = []
     late_flag_suppressed = "late_regularized" in anomaly_flags
+    if in_time is not None and in_time < EARLY_LOGIN_CUTOFF:
+        flags.append("early_login")
     if is_late and not late_flag_suppressed and not suppress_discipline_flags:
         flags.append("late_entry")
     if is_overnight:

@@ -206,6 +206,7 @@ class AttendanceStatusSummary(BaseModel):
     comp_off_earned_count: int
     comp_off_adjusted_days: float
     late_entry_count: int
+    early_login_count: int = 0
     early_logout_count: int
     overnight_exit_count: int
     missing_punch_count: int
@@ -300,6 +301,7 @@ class AttendanceEmployeeMonthlySummaryItem(BaseModel):
     comp_off_earned_count: int
     comp_off_adjusted_days: float
     late_entry_count: int
+    early_login_count: int = 0
     early_logout_count: int
     overnight_exit_count: int
     missing_punch_count: int
@@ -330,6 +332,7 @@ class AttendanceUnitSummaryItem(BaseModel):
     comp_off_earned_count: int
     comp_off_adjusted_days: float
     late_entry_count: int
+    early_login_count: int = 0
     early_logout_count: int
     overnight_exit_count: int
     missing_punch_count: int

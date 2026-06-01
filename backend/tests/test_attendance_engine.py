@@ -181,6 +181,29 @@ class AttendanceEngineTests(unittest.TestCase):
         self.assertEqual(len(missing_punch_groups), 1)
         self.assertFalse(missing_punch_groups[0].requires_review)
 
+    def test_early_login_flag_is_informational_only(self):
+        record = make_record(
+            record_id="record-early-login",
+            employee_code="E2C",
+            employee_name="Early Reporter",
+            date_value="2026-04-04",
+            raw_status="P",
+            in_time="09:45",
+            out_time="20:00",
+            work_duration_hours=10.25,
+            gender="Male",
+        )
+        row = classify_single_record(record)
+        status_summary = build_status_summary([row])
+        monthly_summary = build_employee_monthly_summary([row])[0]
+
+        self.assertEqual(row.attendance_classification, "Present")
+        self.assertEqual(row.payable_day_impact, 1.0)
+        self.assertIn("early_login", row.derived_flags)
+        self.assertEqual(status_summary.early_login_count, 1)
+        self.assertEqual(monthly_summary.early_login_count, 1)
+        self.assertEqual(monthly_summary.payable_days, 1.0)
+
     def test_both_missing_punches_become_absent_without_review_group(self):
         record = make_record(
             record_id="record-both-missing",

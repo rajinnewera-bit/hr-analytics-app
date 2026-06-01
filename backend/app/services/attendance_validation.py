@@ -93,6 +93,7 @@ def build_empty_attendance_validation_summary() -> AttendanceValidationSummary:
                 comp_off_earned_count=0,
                 comp_off_adjusted_days=0.0,
                 late_entry_count=0,
+                early_login_count=0,
                 early_logout_count=0,
                 overnight_exit_count=0,
                 missing_punch_count=0,

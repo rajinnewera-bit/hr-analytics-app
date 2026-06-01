@@ -32,6 +32,7 @@ export type EmployeeAttendanceRegisterRow = {
   lateDeduction: number;
   finalPayableDays: number;
   lateFlags: number;
+  earlyLoginFlags: number;
   irregularPunchFlags: number;
   earlyLogoutFlags: number;
   overnightFlags: number;
@@ -67,6 +68,7 @@ export function deriveStatusSummary(rows: AttendanceProcessedRow[]): AttendanceS
     comp_off_earned_count: 0,
     comp_off_adjusted_days: 0,
     late_entry_count: 0,
+    early_login_count: 0,
     early_logout_count: 0,
     overnight_exit_count: 0,
     missing_punch_count: 0
@@ -107,6 +109,9 @@ export function deriveStatusSummary(rows: AttendanceProcessedRow[]): AttendanceS
     summary.comp_off_adjusted_days += row.comp_off_adjusted;
     if (row.derived_flags.includes("late_entry")) {
       summary.late_entry_count += 1;
+    }
+    if (row.derived_flags.includes("early_login")) {
+      summary.early_login_count += 1;
     }
     if (row.derived_flags.includes("early_logout")) {
       summary.early_logout_count += 1;
@@ -182,6 +187,7 @@ export function deriveEmployeeMonthlySummary(
         comp_off_earned_count: statusSummary.comp_off_earned_count,
         comp_off_adjusted_days: compOffAdjustedDays,
         late_entry_count: statusSummary.late_entry_count,
+        early_login_count: statusSummary.early_login_count,
         early_logout_count: statusSummary.early_logout_count,
         overnight_exit_count: statusSummary.overnight_exit_count,
         missing_punch_count: statusSummary.missing_punch_count,
@@ -243,6 +249,7 @@ export function deriveUnitSummary(
         comp_off_earned_count: statusSummary.comp_off_earned_count,
         comp_off_adjusted_days: statusSummary.comp_off_adjusted_days,
         late_entry_count: statusSummary.late_entry_count,
+        early_login_count: statusSummary.early_login_count,
         early_logout_count: statusSummary.early_logout_count,
         overnight_exit_count: statusSummary.overnight_exit_count,
         missing_punch_count: statusSummary.missing_punch_count,
@@ -441,6 +448,9 @@ export function deriveEmployeeRegister(
       const lateFlags = groupRows.filter((row) =>
         row.derived_flags.includes("late_entry")
       ).length;
+      const earlyLoginFlags = groupRows.filter((row) =>
+        row.derived_flags.includes("early_login")
+      ).length;
       const irregularPunchFlags = groupRows.filter((row) =>
         row.final_status_code === "irregular_review"
       ).length;
@@ -513,6 +523,7 @@ export function deriveEmployeeRegister(
         lateDeduction,
         finalPayableDays,
         lateFlags,
+        earlyLoginFlags,
         irregularPunchFlags,
         earlyLogoutFlags,
         overnightFlags,

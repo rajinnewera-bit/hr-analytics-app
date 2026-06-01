@@ -243,6 +243,7 @@ export type AttendanceStatusSummary = {
   comp_off_earned_count: number;
   comp_off_adjusted_days: number;
   late_entry_count: number;
+  early_login_count: number;
   early_logout_count: number;
   overnight_exit_count: number;
   missing_punch_count: number;
@@ -337,6 +338,7 @@ export type AttendanceEmployeeMonthlySummaryItem = {
   comp_off_earned_count: number;
   comp_off_adjusted_days: number;
   late_entry_count: number;
+  early_login_count: number;
   early_logout_count: number;
   overnight_exit_count: number;
   missing_punch_count: number;
@@ -367,6 +369,7 @@ export type AttendanceUnitSummaryItem = {
   comp_off_earned_count: number;
   comp_off_adjusted_days: number;
   late_entry_count: number;
+  early_login_count: number;
   early_logout_count: number;
   overnight_exit_count: number;
   missing_punch_count: number;

@@ -68,6 +68,7 @@ const emptyAttendanceValidationSummary: AttendanceValidationSummary = {
               comp_off_earned_count: 0,
               comp_off_adjusted_days: 0,
               late_entry_count: 0,
+              early_login_count: 0,
               early_logout_count: 0,
               overnight_exit_count: 0,
       missing_punch_count: 0
@@ -261,6 +262,8 @@ export function normalizeAttendanceValidationSummary(
           attendanceValidationSummary.processing_summary?.status_summary?.comp_off_adjusted_days ?? 0,
         late_entry_count:
           attendanceValidationSummary.processing_summary?.status_summary?.late_entry_count ?? 0,
+        early_login_count:
+          attendanceValidationSummary.processing_summary?.status_summary?.early_login_count ?? 0,
         early_logout_count:
           attendanceValidationSummary.processing_summary?.status_summary?.early_logout_count ?? 0,
         overnight_exit_count:
@@ -398,6 +401,7 @@ export function normalizeAttendanceValidationSummary(
       pending_review_count: item?.pending_review_count ?? 0,
       comp_off_earned_count: item?.comp_off_earned_count ?? 0,
       comp_off_adjusted_days: item?.comp_off_adjusted_days ?? 0,
+      early_login_count: item?.early_login_count ?? 0,
       gross_payable_days: item?.gross_payable_days ?? item?.payable_days ?? 0,
       late_penalty_after_comp_off:
         item?.late_penalty_after_comp_off ?? item?.late_penalty_deductions ?? 0,
@@ -535,7 +539,8 @@ export function normalizeAttendanceValidationSummary(
       unit_name: safeString(item?.unit_name),
       pending_review_count: item?.pending_review_count ?? 0,
       comp_off_earned_count: item?.comp_off_earned_count ?? 0,
-      comp_off_adjusted_days: item?.comp_off_adjusted_days ?? 0
+      comp_off_adjusted_days: item?.comp_off_adjusted_days ?? 0,
+      early_login_count: item?.early_login_count ?? 0,
     })),
     processed_attendance_rows: safeArray(
       attendanceValidationSummary.processed_attendance_rows

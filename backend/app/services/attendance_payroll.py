@@ -89,6 +89,7 @@ def build_status_summary(
     comp_off_earned_count = 0
     comp_off_adjusted_days = 0.0
     late_entry_count = 0
+    early_login_count = 0
     early_logout_count = 0
     overnight_exit_count = 0
     missing_punch_count = 0
@@ -125,6 +126,8 @@ def build_status_summary(
 
         if "late_entry" in row.derived_flags:
             late_entry_count += 1
+        if "early_login" in row.derived_flags:
+            early_login_count += 1
         if "early_logout" in row.derived_flags:
             early_logout_count += 1
         if "overnight_exit" in row.derived_flags:
@@ -145,6 +148,7 @@ def build_status_summary(
         comp_off_earned_count=comp_off_earned_count,
         comp_off_adjusted_days=round(comp_off_adjusted_days, 2),
         late_entry_count=late_entry_count,
+        early_login_count=early_login_count,
         early_logout_count=early_logout_count,
         overnight_exit_count=overnight_exit_count,
         missing_punch_count=missing_punch_count,
@@ -185,6 +189,7 @@ def build_employee_monthly_summary(
                     comp_off_earned_count=status_summary.comp_off_earned_count,
                     comp_off_adjusted_days=round(metrics.comp_off_adjusted_days, 2),
                     late_entry_count=status_summary.late_entry_count,
+                    early_login_count=status_summary.early_login_count,
                     early_logout_count=status_summary.early_logout_count,
                     overnight_exit_count=status_summary.overnight_exit_count,
                     missing_punch_count=status_summary.missing_punch_count,
@@ -264,6 +269,7 @@ def build_unit_summary(
                 comp_off_earned_count=status_summary.comp_off_earned_count,
                 comp_off_adjusted_days=status_summary.comp_off_adjusted_days,
                 late_entry_count=status_summary.late_entry_count,
+                early_login_count=status_summary.early_login_count,
                 early_logout_count=status_summary.early_logout_count,
                 overnight_exit_count=status_summary.overnight_exit_count,
                 missing_punch_count=status_summary.missing_punch_count,
