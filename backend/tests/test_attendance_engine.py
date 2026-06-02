@@ -418,6 +418,124 @@ class AttendanceEngineTests(unittest.TestCase):
         self.assertEqual(row.attendance_classification, "Half Day")
         self.assertEqual(row.payable_day_impact, 0.5)
 
+    def test_exactly_five_hours_remains_half_day(self):
+        row = classify_single_record(
+            make_record(
+                record_id="record-3b",
+                employee_code="E3AA",
+                employee_name="Boundary Half Day",
+                date_value="2026-04-06",
+                raw_status="P",
+                in_time="10:00",
+                out_time="15:00",
+                work_duration_hours=5.0,
+            )
+        )
+
+        self.assertEqual(row.attendance_classification, "Half Day")
+        self.assertEqual(row.payable_day_impact, 0.5)
+
+    def test_more_than_five_hours_becomes_present(self):
+        row = classify_single_record(
+            make_record(
+                record_id="record-3c",
+                employee_code="E3AB",
+                employee_name="Boundary Present",
+                date_value="2026-04-06",
+                raw_status="P",
+                in_time="10:00",
+                out_time="15:01",
+                work_duration_hours=5.01,
+            )
+        )
+
+        self.assertEqual(row.attendance_classification, "Present")
+        self.assertEqual(row.payable_day_impact, 1.0)
+
+    def test_half_day_entry_time_override_applies_even_when_hours_are_below_three(self):
+        row = classify_single_record(
+            make_record(
+                record_id="record-3d",
+                employee_code="E3AC",
+                employee_name="Late Entry Override",
+                date_value="2026-04-06",
+                raw_status="P",
+                in_time="12:15",
+                out_time="14:30",
+                work_duration_hours=2.25,
+            )
+        )
+
+        self.assertEqual(row.attendance_classification, "Half Day")
+        self.assertEqual(row.payable_day_impact, 0.5)
+
+    def test_early_login_flag_is_added_before_ten_am(self):
+        row = classify_single_record(
+            make_record(
+                record_id="record-3e",
+                employee_code="E3AD",
+                employee_name="Early Login",
+                date_value="2026-04-06",
+                raw_status="P",
+                in_time="09:59",
+                out_time="20:00",
+                work_duration_hours=10.02,
+            )
+        )
+
+        self.assertIn("early_login", row.derived_flags)
+
+    def test_early_login_flag_is_not_added_at_ten_am(self):
+        row = classify_single_record(
+            make_record(
+                record_id="record-3f",
+                employee_code="E3AE",
+                employee_name="Not Early Login",
+                date_value="2026-04-06",
+                raw_status="P",
+                in_time="10:00",
+                out_time="20:00",
+                work_duration_hours=10.0,
+            )
+        )
+
+        self.assertNotIn("early_login", row.derived_flags)
+
+    def test_early_login_counts_appear_in_status_and_monthly_summary(self):
+        processed_rows = [
+            classify_single_record(
+                make_record(
+                    record_id="record-3g",
+                    employee_code="E3AF",
+                    employee_name="Summary Early Login",
+                    date_value="2026-04-06",
+                    raw_status="P",
+                    in_time="09:45",
+                    out_time="20:00",
+                    work_duration_hours=10.25,
+                )
+            ),
+            classify_single_record(
+                make_record(
+                    record_id="record-3h",
+                    employee_code="E3AF",
+                    employee_name="Summary Early Login",
+                    date_value="2026-04-07",
+                    raw_status="P",
+                    in_time="10:05",
+                    out_time="20:05",
+                    work_duration_hours=10.0,
+                )
+            ),
+        ]
+
+        apply_monthly_payroll_reconciliation(processed_rows)
+        status_summary = build_status_summary(processed_rows)
+        monthly_summary = build_employee_monthly_summary(processed_rows)
+
+        self.assertEqual(status_summary.early_login_count, 1)
+        self.assertEqual(monthly_summary[0].early_login_count, 1)
+
     def test_late_present_is_payable_and_counted_as_late(self):
         row = classify_single_record(
             make_record(
@@ -722,7 +840,7 @@ class AttendanceEngineTests(unittest.TestCase):
         self.assertEqual(monthly_summary[0].payable_days, 3.0)
         self.assertEqual(len(monthly_summary[0].explainability.comp_off_usage_trail), 1)
         self.assertEqual(
-            monthly_summary[0].explainability.comp_off_usage_trail[0].adjusted_date,
+            monthly_summary[0].explainability.comp_off_usage_trail[0].adjusted_against_date,
             "2026-04-08",
         )
         self.assertEqual(
@@ -1020,11 +1138,117 @@ class AttendanceEngineTests(unittest.TestCase):
         self.assertEqual(monthly_summary.comp_off_adjusted_against_late_days, 1.0)
         self.assertEqual(monthly_summary.gross_payable_days, 4.0)
         self.assertEqual(monthly_summary.payable_days, 4.0)
-        self.assertEqual(monthly_summary.explainability.late_deduction.total_late_flags, 3)
+        self.assertEqual(len(monthly_summary.explainability.comp_off_usage_trail[0].reference_dates), 3)
         self.assertEqual(
-            monthly_summary.explainability.comp_off_usage_trail[0].adjustment_kind,
+            monthly_summary.explainability.comp_off_usage_trail[0].adjusted_against_type,
             "late_deduction",
         )
+
+    def test_may_2026_rajdeep_comp_off_usage_trail_matches_live_payroll_story(self):
+        may_rows = [
+            ("2026-05-01", "P", "09:50", "19:21", 9.52),
+            ("2026-05-02", "P", "10:28", "19:42", 9.23),
+            ("2026-05-03", "WO", None, None, 0.0),
+            ("2026-05-04", "P", "09:59", "19:24", 9.42),
+            ("2026-05-05", "P", "11:13", "19:54", 8.68),
+            ("2026-05-06", "P", "09:58", "19:26", 9.47),
+            ("2026-05-07", "P", "09:53", "19:35", 9.70),
+            ("2026-05-08", "P", "09:54", "20:03", 10.15),
+            ("2026-05-09", "P", "09:44", "19:30", 9.77),
+            ("2026-05-10", "WO", None, None, 0.0),
+            ("2026-05-11", "P", "09:54", "19:19", 9.42),
+            ("2026-05-12", "P", "10:18", "19:35", 9.28),
+            ("2026-05-13", "P", "09:56", "19:58", 10.03),
+            ("2026-05-14", "P", "09:57", "19:42", 9.75),
+            ("2026-05-15", "P", "09:56", "19:48", 9.87),
+            ("2026-05-16", "P", "09:52", "19:23", 9.52),
+            ("2026-05-17", "WO", None, None, 0.0),
+            ("2026-05-18", "P", "09:45", "19:21", 9.60),
+            ("2026-05-19", "A", None, None, None),
+            ("2026-05-20", "P", "10:09", "19:48", 9.65),
+            ("2026-05-21", "P", "10:02", "20:06", 10.07),
+            ("2026-05-22", "P", "09:51", "20:02", 10.18),
+            ("2026-05-23", "P", "10:01", "19:14", 9.22),
+            ("2026-05-24", "P", "09:48", "20:02", 10.23),
+            ("2026-05-25", "P", "09:56", "19:36", 9.67),
+            ("2026-05-26", "P", "10:32", "19:35", 9.05),
+            ("2026-05-27", "P", "09:48", "19:36", 9.80),
+            ("2026-05-28", "P", "09:39", "19:13", 9.57),
+            ("2026-05-29", "P", "09:51", "19:10", 9.32),
+            ("2026-05-30", "P", "09:56", None, None),
+            ("2026-05-31", "P", "09:39", "19:10", 9.52),
+        ]
+
+        processed_rows = classify_attendance_records(
+            [
+                make_record(
+                    record_id=f"rajdeep-may-{date_value}",
+                    employee_code="B&S119",
+                    employee_name="Rajdeep Dutta",
+                    date_value=date_value,
+                    raw_status=raw_status,
+                    in_time=in_time,
+                    out_time=out_time,
+                    work_duration_hours=work_duration_hours,
+                    gender="Male",
+                )
+                for date_value, raw_status, in_time, out_time, work_duration_hours in may_rows
+            ],
+            build_default_attendance_policy_rules(),
+        ).processed_rows
+
+        apply_monthly_payroll_reconciliation(processed_rows)
+        monthly_summary = build_employee_monthly_summary(processed_rows)[0]
+        absent_row = next(
+            row for row in processed_rows if row.final_status_code == "absent"
+        )
+        comp_off_earned_dates = sorted(
+            row.date for row in processed_rows if row.comp_off_earned > 0
+        )
+        comp_off_adjusted_rows = sorted(
+            row.date for row in processed_rows if row.comp_off_adjusted > 0
+        )
+        late_adjusted_rows = sorted(
+            row.date for row in processed_rows if row.late_deduction_adjusted > 0
+        )
+        usage_trail = monthly_summary.explainability.comp_off_usage_trail
+        absent_usage = next(
+            item for item in usage_trail if item.adjusted_against_type == "absent"
+        )
+        late_usage = next(
+            item
+            for item in usage_trail
+            if item.adjusted_against_type == "late_deduction"
+        )
+
+        self.assertEqual(absent_row.date, "2026-05-19")
+        self.assertEqual(comp_off_earned_dates, ["2026-05-24", "2026-05-31"])
+        self.assertEqual(comp_off_adjusted_rows, ["2026-05-24", "2026-05-31"])
+        self.assertEqual(late_adjusted_rows, ["2026-05-31"])
+        self.assertEqual(monthly_summary.present_count, 27)
+        self.assertEqual(monthly_summary.absent_count, 1)
+        self.assertEqual(monthly_summary.paid_week_off_count, 3)
+        self.assertEqual(monthly_summary.comp_off_earned_count, 2)
+        self.assertEqual(monthly_summary.comp_off_adjusted_days, 2.0)
+        self.assertEqual(monthly_summary.late_entry_count, 4)
+        self.assertEqual(monthly_summary.gross_payable_days, 30.0)
+        self.assertEqual(monthly_summary.late_penalty_deductions, 1.0)
+        self.assertEqual(monthly_summary.late_penalty_after_comp_off, 0.0)
+        self.assertEqual(monthly_summary.comp_off_adjusted_against_absent_days, 1.0)
+        self.assertEqual(monthly_summary.comp_off_adjusted_against_late_days, 1.0)
+        self.assertEqual(monthly_summary.comp_off_balance, 0.0)
+        self.assertEqual(monthly_summary.payable_days, 31.0)
+        self.assertEqual(absent_usage.source_date, "2026-05-24")
+        self.assertEqual(absent_usage.adjusted_against_date, "2026-05-19")
+        self.assertEqual(absent_usage.adjusted_against_type, "absent")
+        self.assertEqual(absent_usage.payroll_effect, "+1 payable day")
+        self.assertEqual(late_usage.source_date, "2026-05-31")
+        self.assertEqual(late_usage.adjusted_against_type, "late_deduction")
+        self.assertEqual(
+            late_usage.reference_dates,
+            ["2026-05-02", "2026-05-05", "2026-05-12"],
+        )
+        self.assertEqual(late_usage.payroll_effect, "Late deduction reduced by 1 day")
 
     def test_unused_comp_off_carries_forward_when_month_has_no_pending_deductions(self):
         processed_rows = classify_attendance_records(

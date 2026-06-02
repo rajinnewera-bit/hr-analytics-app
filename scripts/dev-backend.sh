@@ -31,10 +31,11 @@ cleanup_port "$PORT"
 
 cd "$BACKEND_DIR"
 
-if [[ ! -x ".venv/bin/uvicorn" ]]; then
-  echo "Missing backend virtualenv runner at $BACKEND_DIR/.venv/bin/uvicorn" >&2
-  exit 1
+if [[ -x ".venv/bin/uvicorn" ]]; then
+  echo "Starting backend on http://${DEV_HOST}:${PORT} using .venv/bin/uvicorn"
+  exec .venv/bin/uvicorn app.main:app --host "$DEV_HOST" --port "$PORT"
 fi
 
+echo "Backend virtualenv runner not found, falling back to python3 -m uvicorn"
 echo "Starting backend on http://${DEV_HOST}:${PORT}"
-exec .venv/bin/uvicorn app.main:app --host "$DEV_HOST" --port "$PORT"
+exec python3 -m uvicorn app.main:app --host "$DEV_HOST" --port "$PORT"

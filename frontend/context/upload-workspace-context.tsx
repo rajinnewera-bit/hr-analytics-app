@@ -188,7 +188,6 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    let active = true;
     const controller = new AbortController();
     const restoreWorkspace = async () => {
       setAnalysisType(normalizeAnalysisType(storedMeta.analysisType));
@@ -211,7 +210,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
           );
         }
 
-        if (!active) {
+        if (!isMountedRef.current) {
           return;
         }
 
@@ -220,7 +219,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
         setErrorMessage(null);
         setAnalysisType(normalizeAnalysisType(normalizedResponse.analysis_type));
       } catch (error) {
-        if (!active) {
+        if (!isMountedRef.current) {
           return;
         }
         if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -232,7 +231,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
           );
         }
       } finally {
-        if (active) {
+        if (isMountedRef.current) {
           setIsSwitchingSheet(false);
         }
       }
@@ -240,7 +239,6 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
 
     void restoreWorkspace();
     return () => {
-      active = false;
       controller.abort();
     };
   }, [apiBaseUrl, setResult]);

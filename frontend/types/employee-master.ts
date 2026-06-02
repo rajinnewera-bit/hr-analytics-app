@@ -48,4 +48,5 @@ export type EmployeeAttendanceSummary = {
   payable_days: number;
   ot_hours: number;
   late_marks: number;
+  early_login_marks: number;
 };

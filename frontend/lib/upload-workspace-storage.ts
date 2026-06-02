@@ -32,7 +32,7 @@ function safeRemoveSessionKey() {
   try {
     window.sessionStorage.removeItem(SESSION_KEY);
   } catch {
-    // Ignore storage cleanup failures so the app can continue working.
+    // Ignore storage cleanup failures so the UI can keep working.
   }
 }
 

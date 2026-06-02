@@ -44,6 +44,7 @@ export function buildEmployeeAttendanceSummary(
     payable_days: 0,
     ot_hours: 0,
     late_marks: 0,
+    early_login_marks: 0,
   };
 
   rows.forEach((row) => {
@@ -75,6 +76,9 @@ export function buildEmployeeAttendanceSummary(
     );
     if (lateFlags.some((flag) => flag.includes("late"))) {
       summary.late_marks += 1;
+    }
+    if (row.derived_flags.some((flag) => flag.toLowerCase() === "early_login")) {
+      summary.early_login_marks += 1;
     }
   });
 

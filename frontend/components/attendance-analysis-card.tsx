@@ -11,6 +11,7 @@ import {
 import { normalizeAttendanceValidationSummary } from "@/lib/upload-response";
 import type {
   AttendanceAdministrativeException,
+  AttendanceCompOffUsageTrailItem,
   AttendanceEmployeeMonthlySummaryItem,
   AttendanceExceptionGroup,
   AttendanceHolidayMarker,
@@ -33,7 +34,7 @@ type AttendanceAnalysisCardProps = {
   }) => Promise<void>;
 };
 
-type AnalysisTab = "dashboard" | "review" | "processed" | "policy" | "breakdown";
+type AnalysisTab = "dashboard" | "review" | "processed" | "policy";
 type ReviewFilter =
   | "all"
   | "present"
@@ -71,40 +72,17 @@ type ReviewDrilldownContext = {
   scrollY: number;
 };
 
-type ExplainabilityMetric =
-  | "present"
-  | "absent"
-  | "half_day"
-  | "late_flags"
-  | "early_login"
-  | "early_logout"
-  | "overnight"
-  | "irregular_punch"
-  | "payable_sundays"
-  | "unpaid_sundays"
-  | "paid_holidays"
-  | "unpaid_holidays"
-  | "comp_off_earned"
-  | "comp_off_adjusted"
-  | "comp_off_balance"
-  | "pending_review"
-  | "gross_payable"
-  | "final_payable"
-  | "late_deduction"
-  | "leave_adjusted";
-
-type MetricExplainabilityState = {
-  metric: ExplainabilityMetric;
-  title: string;
-  employeeLabel?: string;
-  employeeKey?: string;
-  sourceRows: AttendanceProcessedRow[];
-  monthlySummaries: AttendanceEmployeeMonthlySummaryItem[];
-};
-
-type RowExplainabilityState = {
-  row: AttendanceProcessedRow;
-  group?: AttendanceExceptionGroup | null;
+type FinalPayableDayContribution = {
+  date: string;
+  dayLabel: string;
+  attendanceClassification: string;
+  finalStatusCode: string;
+  payableDayImpact: number;
+  includedInGrossPayable: boolean;
+  compOffRestored: number;
+  lateDeductionBucketDate: boolean;
+  finalContribution: number;
+  explanation: string;
 };
 
 export function AttendanceAnalysisCard({
@@ -155,35 +133,7 @@ export function AttendanceAnalysisCard({
   const [adminExceptionReason, setAdminExceptionReason] = useState("");
   const [adminExceptionRemarks, setAdminExceptionRemarks] = useState("");
   const [adminExceptionCustomLabel, setAdminExceptionCustomLabel] = useState("");
-  const [metricExplainability, setMetricExplainability] =
-    useState<MetricExplainabilityState | null>(null);
-  const [rowExplainability, setRowExplainability] =
-    useState<RowExplainabilityState | null>(null);
-  const [calculationEmployeeKey, setCalculationEmployeeKey] = useState("");
   const selectAllVisibleRef = useRef<HTMLInputElement | null>(null);
-
-  function scrollToEmployeeRow(targetEmployeeKey?: string | null) {
-    const rowKey = targetEmployeeKey || selectedEmployeeKey;
-    if (!rowKey || typeof document === "undefined") {
-      return;
-    }
-    requestAnimationFrame(() => {
-      const rowElement = document.querySelector<HTMLElement>(
-        `[data-employee-row-key="${CSS.escape(rowKey)}"]`
-      );
-      rowElement?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-  }
-
-  function backToMonthlySummary(targetEmployeeKey?: string | null) {
-    if (targetEmployeeKey) {
-      setSelectedEmployeeKey(targetEmployeeKey);
-    }
-    setMetricExplainability(null);
-    setRowExplainability(null);
-    setActiveTab("dashboard");
-    scrollToEmployeeRow(targetEmployeeKey);
-  }
 
   useEffect(() => {
     const nextDecisionMap: Record<string, string> = {};
@@ -232,9 +182,6 @@ export function AttendanceAnalysisCard({
     setAdminExceptionReason("");
     setAdminExceptionRemarks("");
     setAdminExceptionCustomLabel("");
-    setMetricExplainability(null);
-    setRowExplainability(null);
-    setCalculationEmployeeKey("");
   }, [safeSummary]);
 
   const processedRows = safeSummary.processed_attendance_rows;
@@ -365,60 +312,7 @@ export function AttendanceAnalysisCard({
     [reviewScopedExceptions, selectedReviewFilter]
   );
 
-  const drilldownRows = useMemo(
-    () => {
-      const rowsForFilter = reviewScopedRows.filter((row) =>
-        matchesProcessedRowFilter(row, selectedReviewFilter, exceptionGroupByRecordId.get(row.record_id))
-      );
-
-      return rowsForFilter.map((row) => ({
-        processedRow: row,
-        group: exceptionGroupByRecordId.get(row.record_id) ?? null
-      }));
-    },
-    [exceptionGroupByRecordId, reviewScopedRows, selectedReviewFilter]
-  );
-
-  const filteredDrilldownRows = useMemo(() => {
-    const normalizedSearch = reviewSearchTerm.trim().toLowerCase();
-    if (!normalizedSearch) {
-      return drilldownRows;
-    }
-
-    return drilldownRows.filter(({ processedRow }) => {
-      const employeeName = (processedRow.employee_name || "").toLowerCase();
-      const employeeCode = (processedRow.employee_code || "").toLowerCase();
-      return employeeName.includes(normalizedSearch) || employeeCode.includes(normalizedSearch);
-    });
-  }, [drilldownRows, reviewSearchTerm]);
-
-  const visibleExceptionIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          filteredDrilldownRows
-            .map((item) => item.group?.exception_id ?? "")
-            .filter(Boolean)
-        )
-      ),
-    [filteredDrilldownRows]
-  );
-
-  const allVisibleSelected =
-    visibleExceptionIds.length > 0 &&
-    visibleExceptionIds.every((exceptionId) => selectedExceptionIds.includes(exceptionId));
-  const someVisibleSelected =
-    visibleExceptionIds.some((exceptionId) => selectedExceptionIds.includes(exceptionId)) &&
-    !allVisibleSelected;
-
-  useEffect(() => {
-    if (selectAllVisibleRef.current) {
-      selectAllVisibleRef.current.indeterminate = someVisibleSelected;
-    }
-  }, [someVisibleSelected]);
-
   const display = buildDisplayState(safeSummary, filteredRows);
-  const employeeMonthlySummary = display.employeeMonthlySummary;
   const employeeRegister = useMemo(() => {
     const normalizedSearch = employeeSummarySearchTerm.trim().toLowerCase();
     if (!normalizedSearch) {
@@ -433,12 +327,6 @@ export function AttendanceAnalysisCard({
   }, [display.employeeRegister, employeeSummarySearchTerm]);
   const selectedEmployee =
     employeeRegister.find((item) => employeeKey(item) === selectedEmployeeKey) ?? employeeRegister[0] ?? null;
-
-  useEffect(() => {
-    if (!calculationEmployeeKey && employeeRegister[0]) {
-      setCalculationEmployeeKey(employeeKey(employeeRegister[0]));
-    }
-  }, [calculationEmployeeKey, employeeRegister]);
 
   useEffect(() => {
     if (employeeRegister.length === 0) {
@@ -456,6 +344,23 @@ export function AttendanceAnalysisCard({
       setSelectedEmployeeKey(employeeKey(employeeRegister[0]));
     }
   }, [employeeRegister, selectedEmployeeKey]);
+
+  const selectedEmployeeMonthKey = useMemo(() => {
+    if (!selectedEmployee) {
+      return "";
+    }
+
+    return filteredRows
+      .filter(
+        (row) =>
+          row.employee_code === selectedEmployee.employeeCode ||
+          (!selectedEmployee.employeeCode &&
+            (row.employee_name || row.record_id) === selectedEmployee.employeeName)
+      )
+      .map((row) => row.date)
+      .find(Boolean)
+      ?.slice(0, 7) ?? "";
+  }, [filteredRows, selectedEmployee]);
 
   const selectedEmployeeRows = useMemo(() => {
     const normalizedSearch = employeeDetailSearchTerm.trim().toLowerCase();
@@ -496,21 +401,22 @@ export function AttendanceAnalysisCard({
       .sort((left, right) => left.date.localeCompare(right.date));
   }, [employeeDetailSearchTerm, filteredRows, selectedEmployee]);
 
-  const calculationEmployee =
-    employeeRegister.find((employee) => employeeKey(employee) === calculationEmployeeKey) ??
-    selectedEmployee ??
-    employeeRegister[0] ??
-    null;
-
-  const calculationEmployeeMonthlySummary = useMemo(() => {
-    if (!calculationEmployee) {
+  const selectedEmployeeMonthRows = useMemo(() => {
+    if (!selectedEmployee) {
       return [];
     }
-    const targetKey = calculationEmployee.employeeCode || calculationEmployee.employeeName;
-    return employeeMonthlySummary
-      .filter((item) => (item.employee_id || item.employee_name) === targetKey)
-      .sort((left, right) => left.month.localeCompare(right.month));
-  }, [calculationEmployee, employeeMonthlySummary]);
+
+    return filteredRows
+      .filter((row) => {
+        const sameEmployee =
+          row.employee_code === selectedEmployee.employeeCode ||
+          (!selectedEmployee.employeeCode &&
+            (row.employee_name || row.record_id) === selectedEmployee.employeeName);
+
+        return sameEmployee && (!selectedEmployeeMonthKey || row.date.startsWith(selectedEmployeeMonthKey));
+      })
+      .sort((left, right) => left.date.localeCompare(right.date));
+  }, [filteredRows, selectedEmployee, selectedEmployeeMonthKey]);
 
   const detailViewMatchesMultipleEmployees = useMemo(() => {
     if (!employeeDetailSearchTerm.trim()) {
@@ -525,6 +431,189 @@ export function AttendanceAnalysisCard({
       ).size > 1
     );
   }, [employeeDetailSearchTerm, selectedEmployeeRows]);
+
+  const selectedEmployeeMonthlySummary = useMemo(() => {
+    if (!selectedEmployee) {
+      return null;
+    }
+
+    return (
+      display.employeeMonthlySummary.find(
+        (item) =>
+          (item.employee_id || item.employee_name) ===
+            (selectedEmployee.employeeCode || selectedEmployee.employeeName) &&
+          (!selectedEmployeeMonthKey || item.month === selectedEmployeeMonthKey)
+      ) ?? null
+    );
+  }, [display.employeeMonthlySummary, selectedEmployee, selectedEmployeeMonthKey]);
+
+  const selectedCompOffUsageTrail = useMemo(
+    () => selectedEmployeeMonthlySummary?.explainability?.comp_off_usage_trail ?? [],
+    [selectedEmployeeMonthlySummary]
+  );
+
+  const selectedAbsentCompOffTrail = useMemo(
+    () =>
+      selectedCompOffUsageTrail.filter(
+        (item) => item.adjusted_against_type === "absent"
+      ),
+    [selectedCompOffUsageTrail]
+  );
+
+  const selectedLateCompOffTrail = useMemo(
+    () =>
+      selectedCompOffUsageTrail.filter(
+        (item) => item.adjusted_against_type === "late_deduction"
+      ),
+    [selectedCompOffUsageTrail]
+  );
+
+  const drilldownRows = useMemo(
+    () => {
+      const rowsForFilter = reviewScopedRows.filter((row) =>
+        matchesProcessedRowFilter(row, selectedReviewFilter, exceptionGroupByRecordId.get(row.record_id))
+      );
+
+      if (reviewDrilldownContext && selectedReviewFilter === "final_payable") {
+        const restoredAbsentDates = new Set(
+          selectedAbsentCompOffTrail
+            .map((item) => item.adjusted_against_date)
+            .filter(Boolean)
+        );
+
+        reviewScopedRows.forEach((row) => {
+          if (
+            restoredAbsentDates.has(row.date) &&
+            !rowsForFilter.some((existingRow) => existingRow.record_id === row.record_id)
+          ) {
+            rowsForFilter.push(row);
+          }
+        });
+      }
+
+      return rowsForFilter.map((row) => ({
+        processedRow: row,
+        group: exceptionGroupByRecordId.get(row.record_id) ?? null
+      }));
+    },
+    [
+      exceptionGroupByRecordId,
+      reviewDrilldownContext,
+      reviewScopedRows,
+      selectedAbsentCompOffTrail,
+      selectedReviewFilter
+    ]
+  );
+
+  const filteredDrilldownRows = useMemo(() => {
+    const normalizedSearch = reviewSearchTerm.trim().toLowerCase();
+    if (!normalizedSearch) {
+      return drilldownRows;
+    }
+
+    return drilldownRows.filter(({ processedRow }) => {
+      const employeeName = (processedRow.employee_name || "").toLowerCase();
+      const employeeCode = (processedRow.employee_code || "").toLowerCase();
+      return employeeName.includes(normalizedSearch) || employeeCode.includes(normalizedSearch);
+    });
+  }, [drilldownRows, reviewSearchTerm]);
+
+  const visibleExceptionIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          filteredDrilldownRows
+            .map((item) => item.group?.exception_id ?? "")
+            .filter(Boolean)
+        )
+      ),
+    [filteredDrilldownRows]
+  );
+
+  const allVisibleSelected =
+    visibleExceptionIds.length > 0 &&
+    visibleExceptionIds.every((exceptionId) => selectedExceptionIds.includes(exceptionId));
+  const someVisibleSelected =
+    visibleExceptionIds.some((exceptionId) => selectedExceptionIds.includes(exceptionId)) &&
+    !allVisibleSelected;
+
+  useEffect(() => {
+    if (selectAllVisibleRef.current) {
+      selectAllVisibleRef.current.indeterminate = someVisibleSelected;
+    }
+  }, [someVisibleSelected]);
+
+  const selectedEmployeeFinalPayableBreakdown = useMemo<FinalPayableDayContribution[]>(() => {
+    if (!selectedEmployeeMonthRows.length) {
+      return [];
+    }
+
+    const restoredByDate = new Map<string, AttendanceCompOffUsageTrailItem[]>();
+    selectedAbsentCompOffTrail.forEach((item) => {
+      if (!item.adjusted_against_date) {
+        return;
+      }
+
+      const existingItems = restoredByDate.get(item.adjusted_against_date) ?? [];
+      existingItems.push(item);
+      restoredByDate.set(item.adjusted_against_date, existingItems);
+    });
+
+    const lateReferenceDates = new Set(
+      selectedLateCompOffTrail.flatMap((item) => item.reference_dates ?? [])
+    );
+
+    return selectedEmployeeMonthRows.map((row) => {
+      const payableDayImpact = Number(row.payable_day_impact || 0);
+      const restoredItems = restoredByDate.get(row.date) ?? [];
+      const compOffRestored = restoredItems.reduce(
+        (total, item) => total + Number(item.used_value || 0),
+        0
+      );
+      const lateDeductionBucketDate = lateReferenceDates.has(row.date);
+      const finalContribution = payableDayImpact + compOffRestored;
+
+      const explanationParts = [
+        payableDayImpact > 0
+          ? "Counts in gross payable before monthly payroll reconciliation."
+          : "Does not add payable value in gross payable on its own.",
+        compOffRestored > 0
+          ? `Comp off restores ${compOffRestored.toFixed(2)} day(s) on this date.`
+          : "",
+        lateDeductionBucketDate
+          ? "This date is part of the three-late deduction bucket, but that bucket is fully offset by comp off in the final payroll result."
+          : ""
+      ].filter(Boolean);
+
+      return {
+        date: row.date,
+        dayLabel: formatDayLabel(row.date),
+        attendanceClassification: row.attendance_classification,
+        finalStatusCode: row.final_status_code,
+        payableDayImpact,
+        includedInGrossPayable: payableDayImpact > 0,
+        compOffRestored,
+        lateDeductionBucketDate,
+        finalContribution,
+        explanation: explanationParts.join(" ")
+      };
+    });
+  }, [selectedAbsentCompOffTrail, selectedEmployeeMonthRows, selectedLateCompOffTrail]);
+
+  const grossPayableVisibleRowCount = useMemo(
+    () =>
+      selectedEmployeeFinalPayableBreakdown.filter((item) => item.includedInGrossPayable).length,
+    [selectedEmployeeFinalPayableBreakdown]
+  );
+
+  const restoredAbsentContribution = useMemo(
+    () =>
+      selectedEmployeeFinalPayableBreakdown.reduce(
+        (total, item) => total + item.compOffRestored,
+        0
+      ),
+    [selectedEmployeeFinalPayableBreakdown]
+  );
 
   const processedAttendanceRows = useMemo(() => {
     const normalizedSearch = processedAttendanceSearchTerm.trim().toLowerCase();
@@ -563,21 +652,13 @@ export function AttendanceAnalysisCard({
 function renderMetricCell(
     value: number | string,
     employee: EmployeeAttendanceRegisterRow,
-    reviewFilter: ReviewFilter,
-    metric?: ExplainabilityMetric
+    reviewFilter: ReviewFilter
   ) {
     return (
       <button
         type="button"
         onClick={(event) => {
           event.stopPropagation();
-          if (metric) {
-            openMetricExplainability(metric, {
-              employee,
-              title: `${employee.employeeName || employee.employeeCode} → ${metricCardLabel(metric)}`
-            });
-            return;
-          }
           openEmployeeMetricReview(employee, reviewFilter);
         }}
         className="cursor-pointer rounded-lg px-2 py-1 text-left font-medium text-slateText underline-offset-4 transition hover:bg-teal-50 hover:text-teal-800 hover:underline focus:outline-none focus:ring-2 focus:ring-teal-100"
@@ -645,64 +726,10 @@ function renderMetricCell(
     setSelectedExceptionIds([]);
   }
 
-  function openMetricExplainability(
-    metric: ExplainabilityMetric,
-    options?: {
-      employee?: EmployeeAttendanceRegisterRow | null;
-      title?: string;
-    }
-  ) {
-    const scopedEmployee = options?.employee ?? null;
-    const employeeScopedRows = scopedEmployee
-      ? filteredRows.filter(
-          (row) =>
-            (row.employee_code || row.employee_name || row.record_id) ===
-            (scopedEmployee.employeeCode || scopedEmployee.employeeName)
-        )
-      : filteredRows;
-    const employeeScopedSummaries = scopedEmployee
-      ? employeeMonthlySummary.filter(
-          (item) =>
-            (item.employee_id || item.employee_name) ===
-            (scopedEmployee.employeeCode || scopedEmployee.employeeName)
-        )
-      : employeeMonthlySummary;
-
-    setMetricExplainability({
-      metric,
-      title:
-        options?.title ??
-        `${scopedEmployee ? `${scopedEmployee.employeeName || scopedEmployee.employeeCode} → ` : ""}${metricCardLabel(metric)}`,
-      employeeLabel: scopedEmployee?.employeeName || scopedEmployee?.employeeCode,
-      employeeKey: scopedEmployee ? employeeKey(scopedEmployee) : undefined,
-      sourceRows: employeeScopedRows,
-      monthlySummaries: employeeScopedSummaries,
-    });
-  }
-
-  function openCalculationBreakdown(
-    employee?: EmployeeAttendanceRegisterRow | null
-  ) {
-    const employeeForBreakdown = employee ?? selectedEmployee ?? employeeRegister[0] ?? null;
-    if (!employeeForBreakdown) {
-      return;
-    }
-    setCalculationEmployeeKey(employeeKey(employeeForBreakdown));
-    setActiveTab("breakdown");
-  }
-
-  function openRowExplainability(
-    row: AttendanceProcessedRow,
-    group?: AttendanceExceptionGroup | null
-  ) {
-    setRowExplainability({ row, group: group ?? null });
-  }
-
   function openEmployeeMetricReview(
     employee: EmployeeAttendanceRegisterRow,
     reviewFilter: ReviewFilter
   ) {
-    setReviewSearchTerm("");
     setSelectedEmployeeKey(employeeKey(employee));
     setReviewDrilldownContext({
       employeeKey: employee.employeeCode || employee.employeeName,
@@ -714,33 +741,6 @@ function renderMetricCell(
     setActiveTab("review");
     setSelectedReviewFilter(reviewFilter);
     setSelectedExceptionIds([]);
-  }
-
-  function openRowInReview(
-    row: AttendanceProcessedRow,
-    reviewFilter: ReviewFilter
-  ) {
-    const rowEmployeeKey = row.employee_code || row.employee_name || row.record_id;
-    const matchingEmployee =
-      employeeRegister.find((employee) => employeeKey(employee) === rowEmployeeKey) ?? null;
-    if (matchingEmployee) {
-      setSelectedEmployeeKey(employeeKey(matchingEmployee));
-      setReviewDrilldownContext({
-        employeeKey: matchingEmployee.employeeCode || matchingEmployee.employeeName,
-        employeeLabel: matchingEmployee.employeeName || matchingEmployee.employeeCode,
-        filter: reviewFilter,
-        filterLabel: reviewFilterLabel(reviewFilter),
-        scrollY: typeof window !== "undefined" ? window.scrollY : 0
-      });
-    } else {
-      setReviewDrilldownContext(null);
-    }
-    setActiveTab("review");
-    setSelectedReviewFilter(reviewFilter);
-    setReviewSearchTerm(row.date || "");
-    setSelectedExceptionIds([]);
-    setMetricExplainability(null);
-    setRowExplainability(null);
   }
 
   function handleReviewBack() {
@@ -977,11 +977,6 @@ function renderMetricCell(
             onClick={() => setActiveTab("processed")}
           />
           <TabButton
-            label="Calculation Breakdown"
-            active={activeTab === "breakdown"}
-            onClick={() => openCalculationBreakdown()}
-          />
-          <TabButton
             label="Policy Rules"
             active={activeTab === "policy"}
             onClick={() => setActiveTab("policy")}
@@ -993,64 +988,19 @@ function renderMetricCell(
         <div className="mt-4 space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
             <TopSummaryCard label="Total Employees" value={display.employeeCount.toString()} tone="slate" />
-            <TopSummaryCard label="Present" value={display.statusSummary.present_count.toString()} tone="emerald" onClick={() => openMetricExplainability("present")} />
-            <TopSummaryCard label="Absent" value={display.statusSummary.absent_count.toString()} tone="rose" onClick={() => openMetricExplainability("absent")} />
-            <TopSummaryCard label="Half Day" value={display.statusSummary.half_day_count.toString()} tone="amber" onClick={() => openMetricExplainability("half_day")} />
-            <TopSummaryCard label="Late Flags" value={display.statusSummary.late_entry_count.toString()} tone="sky" onClick={() => openMetricExplainability("late_flags")} />
-            <TopSummaryCard label="Early Login" value={display.statusSummary.early_login_count.toString()} tone="sky" onClick={() => openMetricExplainability("early_login")} />
+            <TopSummaryCard label="Present" value={display.statusSummary.present_count.toString()} tone="emerald" onClick={() => openReviewFilter("present")} />
+            <TopSummaryCard label="Absent" value={display.statusSummary.absent_count.toString()} tone="rose" onClick={() => openReviewFilter("absent")} />
+            <TopSummaryCard label="Half Day" value={display.statusSummary.half_day_count.toString()} tone="amber" onClick={() => openReviewFilter("half_day")} />
+            <TopSummaryCard label="Late Flags" value={display.statusSummary.late_entry_count.toString()} tone="sky" onClick={() => openReviewFilter("late")} />
+            <TopSummaryCard label="Early Login" value={display.statusSummary.early_login_count.toString()} tone="emerald" onClick={() => openReviewFilter("early_login")} />
             <TopSummaryCard
               label="Irregular Punch"
               value={display.irregularPunchCount.toString()}
               tone="amber"
-              onClick={() => openMetricExplainability("irregular_punch")}
+              onClick={() => openReviewFilter("irregular_punch")}
             />
-            <TopSummaryCard label="Payable Sundays" value={display.payableSundays.toString()} tone="emerald" onClick={() => openMetricExplainability("payable_sundays")} />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-            <TopSummaryCard label="Unpaid Sundays" value={display.unpaidSundays.toString()} tone="slate" onClick={() => openMetricExplainability("unpaid_sundays")} />
-            <TopSummaryCard
-              label="Comp Off Earned"
-              value={formatMetricValue(sumEmployeeMetric(employeeMonthlySummary, "comp_off_earned_count"))}
-              tone="emerald"
-              onClick={() => openMetricExplainability("comp_off_earned")}
-            />
-            <TopSummaryCard
-              label="Comp Off Adjusted"
-              value={formatMetricValue(sumEmployeeMetric(employeeMonthlySummary, "comp_off_adjusted_days"))}
-              tone="sky"
-              onClick={() => openMetricExplainability("comp_off_adjusted")}
-            />
-            <TopSummaryCard
-              label="Comp Off Balance"
-              value={formatMetricValue(sumEmployeeMetric(employeeMonthlySummary, "comp_off_balance"))}
-              tone="slate"
-              onClick={() => openMetricExplainability("comp_off_balance")}
-            />
-            <TopSummaryCard
-              label="Pending Review"
-              value={display.statusSummary.pending_review_count.toString()}
-              tone="amber"
-              onClick={() => openMetricExplainability("pending_review")}
-            />
-            <TopSummaryCard
-              label="Gross Payable"
-              value={formatMetricValue(sumEmployeeMetric(employeeMonthlySummary, "gross_payable_days"))}
-              tone="emerald"
-              onClick={() => openMetricExplainability("gross_payable")}
-            />
-            <TopSummaryCard
-              label="Late Deductions"
-              value={formatMetricValue(sumEmployeeMetric(employeeMonthlySummary, "late_penalty_after_comp_off"))}
-              tone="rose"
-              onClick={() => openMetricExplainability("late_deduction")}
-            />
-            <TopSummaryCard
-              label="Final Payable"
-              value={formatMetricValue(sumEmployeeMetric(employeeMonthlySummary, "payable_days"))}
-              tone="emerald"
-              onClick={() => openMetricExplainability("final_payable")}
-            />
+            <TopSummaryCard label="Payable Sundays" value={display.payableSundays.toString()} tone="emerald" onClick={() => openReviewFilter("paid_weekoff")} />
+            <TopSummaryCard label="Unpaid Sundays" value={display.unpaidSundays.toString()} tone="slate" onClick={() => openReviewFilter("unpaid_weekoff")} />
           </div>
 
           <div className="grid items-start gap-4 xl:grid-cols-[1.08fr_0.92fr]">
@@ -1059,12 +1009,12 @@ function renderMetricCell(
             title="Employee Monthly Summary"
             subtitle="Use this as the HR attendance register for the current selection."
                 action={
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {selectedEmployee ? (
                       <button
                         type="button"
-                        onClick={() => openCalculationBreakdown(selectedEmployee)}
-                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
+                        onClick={() => openEmployeeMetricReview(selectedEmployee, "final_payable")}
+                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-ink transition hover:border-slate-400 hover:bg-slate-50"
                       >
                         View Calculation
                       </button>
@@ -1095,7 +1045,7 @@ function renderMetricCell(
                   </div>
 
                   <div className="max-h-[24rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
-                  <table className="min-w-[1700px] divide-y divide-slate-200 text-left text-sm">
+                  <table className="min-w-[1820px] divide-y divide-slate-200 text-left text-sm">
                     <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700 shadow-sm">
                       <tr>
                         <th className="px-3 py-2 font-semibold">Employee ID</th>
@@ -1112,7 +1062,6 @@ function renderMetricCell(
                         <th className="px-3 py-2 font-semibold">Gross Payable</th>
                         <th className="px-3 py-2 font-semibold">Late Deduction</th>
                         <th className="px-3 py-2 font-semibold">Final Payable</th>
-                        <th className="px-3 py-2 font-semibold">Calculation</th>
                         <th className="px-3 py-2 font-semibold">Late Flags</th>
                         <th className="px-3 py-2 font-semibold">Early Login</th>
                         <th className="px-3 py-2 font-semibold">Irregular Flags</th>
@@ -1123,6 +1072,7 @@ function renderMetricCell(
                         <th className="px-3 py-2 font-semibold">Comp Off Balance</th>
                         <th className="px-3 py-2 font-semibold">Leave Adjusted</th>
                         <th className="px-3 py-2 font-semibold">Primary Total</th>
+                        <th className="px-3 py-2 font-semibold">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1132,7 +1082,6 @@ function renderMetricCell(
                           return (
                           <tr
                             key={`${employeeKey(employee)}-${index}`}
-                            data-employee-row-key={employeeKey(employee)}
                             onClick={() => setSelectedEmployeeKey(employeeKey(employee))}
                             className={`cursor-pointer transition ${
                               isSelected ? "bg-teal-50" : "hover:bg-slate-50"
@@ -1141,38 +1090,26 @@ function renderMetricCell(
                             <td className="px-3 py-2 font-medium text-ink">{employee.employeeCode || "-"}</td>
                             <td className="px-3 py-2 text-ink">{employee.employeeName || "Unknown Employee"}</td>
                             <td className="px-3 py-2 text-slateText">{employee.gender || "-"}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.presentDays, employee, "present", "present")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.halfDays, employee, "half_day", "half_day")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.absentDays, employee, "absent", "absent")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.paidWeekOffs, employee, "paid_weekoff", "payable_sundays")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.unpaidWeekOffs, employee, "unpaid_weekoff", "unpaid_sundays")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.paidHolidays, employee, "paid_holiday", "paid_holidays")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.unpaidHolidays, employee, "unpaid_holiday", "unpaid_holidays")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.pendingReviewDays, employee, "pending_review", "pending_review")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.grossPayableDays, employee, "gross_payable", "gross_payable")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.lateDeduction, employee, "late_deduction", "late_deduction")}</td>
-                            <td className="px-3 py-2 font-semibold text-ink">{renderMetricCell(employee.finalPayableDays, employee, "final_payable", "final_payable")}</td>
-                            <td className="px-3 py-2">
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openCalculationBreakdown(employee);
-                                }}
-                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-slate-50"
-                              >
-                                View Calculation
-                              </button>
-                            </td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.lateFlags, employee, "late", "late_flags")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.earlyLoginFlags, employee, "early_login", "early_login")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.irregularPunchFlags, employee, "irregular_punch", "irregular_punch")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.earlyLogoutFlags, employee, "early_logout", "early_logout")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.overnightFlags, employee, "overnight", "overnight")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.compOffEarned, employee, "comp_off_earned", "comp_off_earned")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.compOffAdjusted, employee, "comp_off_adjusted", "comp_off_adjusted")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.compOffBalance, employee, "comp_off_balance", "comp_off_balance")}</td>
-                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.leaveAdjusted, employee, "leave_adjusted", "leave_adjusted")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.presentDays, employee, "present")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.halfDays, employee, "half_day")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.absentDays, employee, "absent")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.paidWeekOffs, employee, "paid_weekoff")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.unpaidWeekOffs, employee, "unpaid_weekoff")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.paidHolidays, employee, "paid_holiday")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.unpaidHolidays, employee, "unpaid_holiday")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.pendingReviewDays, employee, "pending_review")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.grossPayableDays, employee, "gross_payable")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.lateDeduction, employee, "late_deduction")}</td>
+                            <td className="px-3 py-2 font-semibold text-ink">{renderMetricCell(employee.finalPayableDays, employee, "final_payable")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.lateFlags, employee, "late")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.earlyLoginFlags, employee, "early_login")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.irregularPunchFlags, employee, "irregular_punch")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.earlyLogoutFlags, employee, "early_logout")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.overnightFlags, employee, "overnight")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.compOffEarned, employee, "comp_off_earned")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.compOffAdjusted, employee, "comp_off_adjusted")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.compOffBalance, employee, "comp_off_balance")}</td>
+                            <td className="px-3 py-2 text-slateText">{renderMetricCell(employee.leaveAdjusted, employee, "leave_adjusted")}</td>
                             <td className="px-3 py-2 font-medium text-ink">
                                 {renderMetricCell(
                                   `${employee.primaryDayTotal}/${employee.calendarDays}`,
@@ -1180,7 +1117,19 @@ function renderMetricCell(
                                   "primary_total"
                                 )}
                               </td>
-                            </tr>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openEmployeeMetricReview(employee, "final_payable");
+                                }}
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-slate-400 hover:bg-slate-50"
+                              >
+                                View Calculation
+                              </button>
+                            </td>
+                          </tr>
                           );
                         })
                       ) : (
@@ -1207,6 +1156,17 @@ function renderMetricCell(
                       ? `${selectedEmployee.employeeName || selectedEmployee.employeeCode} • click another employee above to switch the monthly detail.`
                       : "Select an employee to inspect day-wise attendance and payroll impact."
                 }
+                action={
+                  selectedEmployee ? (
+                    <button
+                      type="button"
+                      onClick={() => openEmployeeMetricReview(selectedEmployee, "final_payable")}
+                      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-ink transition hover:border-slate-400 hover:bg-slate-50"
+                    >
+                      View Calculation
+                    </button>
+                  ) : null
+                }
               >
                 <div className="mb-3 grid gap-3 lg:grid-cols-[minmax(0,18rem)_1fr] lg:items-end">
                   <FilterInput
@@ -1231,6 +1191,7 @@ function renderMetricCell(
                         <th className="px-3 py-2 font-semibold">Working Hours</th>
                         <th className="px-3 py-2 font-semibold">Attendance Result</th>
                         <th className="px-3 py-2 font-semibold">Rule Applied</th>
+                        <th className="px-3 py-2 font-semibold">Flags</th>
                         <th className="px-3 py-2 font-semibold">Payroll Impact</th>
                       </tr>
                     </thead>
@@ -1247,12 +1208,17 @@ function renderMetricCell(
                             <td className="px-3 py-2 text-slateText" title={buildAttendanceAuditTitle(row)}>
                               {formatRuleId(row.detected_rule_id)}
                             </td>
+                            <td className="px-3 py-2 text-slateText">
+                              {row.derived_flags.length > 0
+                                ? row.derived_flags.map(formatFlag).join(", ")
+                                : "-"}
+                            </td>
                             <td className="px-3 py-2 font-medium text-ink">{row.payroll_impact_label}</td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={8} className="px-3 py-6 text-center text-slateText">
+                          <td colSpan={9} className="px-3 py-6 text-center text-slateText">
                             No employee detail rows are available in the current filter.
                           </td>
                         </tr>
@@ -1269,15 +1235,15 @@ function renderMetricCell(
                 subtitle="Monthly totals from the processed attendance working."
               >
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <MiniMetric label="Present" value={display.statusSummary.present_count.toString()} onClick={() => openMetricExplainability("present")} />
-                  <MiniMetric label="Absent" value={display.statusSummary.absent_count.toString()} onClick={() => openMetricExplainability("absent")} />
-                  <MiniMetric label="Half Day" value={display.statusSummary.half_day_count.toString()} onClick={() => openMetricExplainability("half_day")} />
-                  <MiniMetric label="Paid WO" value={display.statusSummary.paid_week_off_count.toString()} onClick={() => openMetricExplainability("payable_sundays")} />
-                  <MiniMetric label="Paid Holiday" value={display.statusSummary.paid_holiday_count.toString()} onClick={() => openMetricExplainability("paid_holidays")} />
-                  <MiniMetric label="Late Flags" value={display.statusSummary.late_entry_count.toString()} onClick={() => openMetricExplainability("late_flags")} />
-                  <MiniMetric label="Early Login" value={display.statusSummary.early_login_count.toString()} onClick={() => openMetricExplainability("early_login")} />
-                  <MiniMetric label="Pending Review" value={display.statusSummary.pending_review_count.toString()} onClick={() => openMetricExplainability("pending_review")} />
-                  <MiniMetric label="Comp Off" value={display.statusSummary.comp_off_earned_count.toString()} onClick={() => openMetricExplainability("comp_off_earned")} />
+                  <MiniMetric label="Present" value={display.statusSummary.present_count.toString()} onClick={() => openReviewFilter("present")} />
+                  <MiniMetric label="Absent" value={display.statusSummary.absent_count.toString()} onClick={() => openReviewFilter("absent")} />
+                  <MiniMetric label="Half Day" value={display.statusSummary.half_day_count.toString()} onClick={() => openReviewFilter("half_day")} />
+                  <MiniMetric label="Paid WO" value={display.statusSummary.paid_week_off_count.toString()} onClick={() => openReviewFilter("paid_weekoff")} />
+                  <MiniMetric label="Paid Holiday" value={display.statusSummary.paid_holiday_count.toString()} onClick={() => openReviewFilter("paid_holiday")} />
+                  <MiniMetric label="Late Flags" value={display.statusSummary.late_entry_count.toString()} onClick={() => openReviewFilter("late")} />
+                  <MiniMetric label="Early Login" value={display.statusSummary.early_login_count.toString()} onClick={() => openReviewFilter("early_login")} />
+                  <MiniMetric label="Pending Review" value={display.statusSummary.pending_review_count.toString()} onClick={() => openReviewFilter("pending_review")} />
+                  <MiniMetric label="Comp Off" value={display.statusSummary.comp_off_earned_count.toString()} onClick={() => openReviewFilter("comp_off")} />
                 </div>
               </CompactInfoCard>
 
@@ -1589,6 +1555,272 @@ function renderMetricCell(
               ) : null}
             </div>
 
+            {reviewDrilldownContext &&
+            selectedEmployeeMonthlySummary &&
+            ["comp_off_adjusted", "comp_off_balance", "final_payable", "late_deduction"].includes(
+              selectedReviewFilter
+            ) ? (
+              <div className="mb-3 grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
+                {(selectedReviewFilter === "comp_off_adjusted" ||
+                  selectedReviewFilter === "comp_off_balance" ||
+                  selectedReviewFilter === "final_payable") &&
+                selectedCompOffUsageTrail.length > 0 ? (
+                  <CompactInfoCard
+                    title="Comp Off Usage Trail"
+                    subtitle="This shows where each comp off credit was earned and what payroll impact it created."
+                  >
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                      <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                        <thead className="bg-slate-100 text-slate-700">
+                          <tr>
+                            <th className="px-3 py-2 font-semibold">Source Date</th>
+                            <th className="px-3 py-2 font-semibold">Source Day</th>
+                            <th className="px-3 py-2 font-semibold">Hours</th>
+                            <th className="px-3 py-2 font-semibold">Earned</th>
+                            <th className="px-3 py-2 font-semibold">Used</th>
+                            <th className="px-3 py-2 font-semibold">Adjusted Against</th>
+                            <th className="px-3 py-2 font-semibold">Adjustment Type</th>
+                            <th className="px-3 py-2 font-semibold">Reason</th>
+                            <th className="px-3 py-2 font-semibold">Payroll Effect</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {selectedCompOffUsageTrail.map((item, index) => (
+                            <tr key={`${item.source_record_id}-${item.adjusted_against_type}-${index}`}>
+                              <td className="px-3 py-2 font-medium text-ink">
+                                {formatDisplayDate(item.source_date)}
+                              </td>
+                              <td className="px-3 py-2 text-slateText">
+                                {item.source_day || formatDayLabel(item.source_date)}
+                              </td>
+                              <td className="px-3 py-2 text-slateText">
+                                {item.source_working_hours || "-"}
+                              </td>
+                              <td className="px-3 py-2 text-slateText">{item.earned_value}</td>
+                              <td className="px-3 py-2 text-slateText">{item.used_value}</td>
+                              <td className="px-3 py-2 text-slateText">
+                                {item.adjusted_against_date
+                                  ? `${formatDisplayDate(item.adjusted_against_date)}${item.adjusted_against_day ? ` • ${item.adjusted_against_day}` : ""}`
+                                  : item.reference_dates.length > 0
+                                    ? item.reference_dates
+                                        .map((dateValue) => formatDisplayDate(dateValue))
+                                        .join(", ")
+                                    : "Not date-specific"}
+                              </td>
+                              <td className="px-3 py-2 text-slateText">
+                                {item.adjusted_against_type === "absent"
+                                  ? "Absent Day"
+                                  : "Late Deduction"}
+                              </td>
+                              <td className="px-3 py-2 text-slateText">
+                                {item.adjusted_against_reason}
+                              </td>
+                              <td className="px-3 py-2 font-medium text-ink">
+                                {item.payroll_effect}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="mt-3 text-sm text-slateText">
+                      Source rows can still carry <span className="font-semibold text-ink">Comp Off Adjusted</span> in the processed register for payroll bookkeeping. The trail above is the audit-safe view of where each credit was actually used.
+                    </p>
+                  </CompactInfoCard>
+                ) : null}
+
+                {selectedReviewFilter === "late_deduction" ||
+                selectedReviewFilter === "final_payable" ? (
+                  <CompactInfoCard
+                    title="Final Payable Story"
+                    subtitle="Payroll uses the monthly reconciliation below after attendance classification is complete."
+                  >
+                    <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-950">
+                      <p className="font-semibold">
+                        Final Payable is not a simple count of visible payable attendance rows.
+                      </p>
+                      <p className="mt-1">
+                        Gross Payable counts the attendance rows that already have direct payable
+                        value. A restored absent day adds back payable value during payroll
+                        reconciliation even though that row starts at{" "}
+                        <span className="font-semibold">0.00</span>. A comp off used against late
+                        deduction reduces the monthly deduction bucket; it does not create an extra
+                        attendance day.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <MiniMetric
+                        label="Gross Payable"
+                        value={selectedEmployeeMonthlySummary.gross_payable_days.toFixed(2)}
+                      />
+                      <MiniMetric
+                        label="Late Deduction Before Comp Off"
+                        value={selectedEmployeeMonthlySummary.late_penalty_deductions.toFixed(2)}
+                      />
+                      <MiniMetric
+                        label="Comp Off Used Against Absent Day"
+                        value={selectedEmployeeMonthlySummary.comp_off_adjusted_against_absent_days.toFixed(2)}
+                      />
+                      <MiniMetric
+                        label="Comp Off Used Against Late Deduction"
+                        value={selectedEmployeeMonthlySummary.comp_off_adjusted_against_late_days.toFixed(2)}
+                      />
+                      <MiniMetric
+                        label="Late Deduction After Comp Off"
+                        value={selectedEmployeeMonthlySummary.late_penalty_after_comp_off.toFixed(2)}
+                      />
+                      <MiniMetric
+                        label="Final Payable"
+                        value={selectedEmployeeMonthlySummary.payable_days.toFixed(2)}
+                      />
+                    </div>
+                    <div className="mt-3 space-y-2 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slateText">
+                      <p>
+                        Gross payable starts at{" "}
+                        <span className="font-semibold text-ink">
+                          {selectedEmployeeMonthlySummary.gross_payable_days.toFixed(2)}
+                        </span>{" "}
+                        days.
+                      </p>
+                      <p>
+                        Comp off restored{" "}
+                        <span className="font-semibold text-ink">
+                          {selectedEmployeeMonthlySummary.comp_off_adjusted_against_absent_days.toFixed(2)}
+                        </span>{" "}
+                        day(s) that would otherwise stay unpaid.
+                      </p>
+                      <p>
+                        Late deduction started at{" "}
+                        <span className="font-semibold text-ink">
+                          {selectedEmployeeMonthlySummary.late_penalty_deductions.toFixed(2)}
+                        </span>{" "}
+                        day(s) and was reduced to{" "}
+                        <span className="font-semibold text-ink">
+                          {selectedEmployeeMonthlySummary.late_penalty_after_comp_off.toFixed(2)}
+                        </span>{" "}
+                        after applying comp off against the late policy bucket.
+                      </p>
+                      <p>
+                        Final payable therefore closes at{" "}
+                        <span className="font-semibold text-ink">
+                          {selectedEmployeeMonthlySummary.payable_days.toFixed(2)}
+                        </span>{" "}
+                        day(s).
+                      </p>
+                      <p>
+                        In this employee view, there are{" "}
+                        <span className="font-semibold text-ink">
+                          {grossPayableVisibleRowCount}
+                        </span>{" "}
+                        direct payable attendance rows in gross payable. The apparent extra day
+                        comes from{" "}
+                        <span className="font-semibold text-ink">
+                          {restoredAbsentContribution.toFixed(2)}
+                        </span>{" "}
+                        absent day(s) restored during reconciliation, while the late deduction is
+                        fully reduced to{" "}
+                        <span className="font-semibold text-ink">
+                          {selectedEmployeeMonthlySummary.late_penalty_after_comp_off.toFixed(2)}
+                        </span>
+                        .
+                      </p>
+                      {selectedAbsentCompOffTrail.length > 0 ? (
+                        <p>
+                          Absent-day restoration:
+                          {" "}
+                          {selectedAbsentCompOffTrail
+                            .map(
+                              (item) =>
+                                `${formatDisplayDate(item.source_date)} → ${formatDisplayDate(item.adjusted_against_date)}`
+                            )
+                            .join(", ")}
+                        </p>
+                      ) : null}
+                      {selectedLateCompOffTrail.length > 0 ? (
+                        <p>
+                          Late-deduction offsets:
+                          {" "}
+                          {selectedLateCompOffTrail
+                            .map(
+                              (item) =>
+                                `${formatDisplayDate(item.source_date)} → ${item.reference_dates
+                                  .map((dateValue) => formatDisplayDate(dateValue))
+                                  .join(", ")}`
+                            )
+                            .join("; ")}
+                        </p>
+                      ) : null}
+                    </div>
+                    {selectedEmployeeFinalPayableBreakdown.length > 0 ? (
+                      <div className="mt-3 rounded-2xl border border-slate-200 bg-white">
+                        <div className="border-b border-slate-200 px-4 py-3">
+                          <p className="text-sm font-semibold text-ink">
+                            Day-Level Final Payable Reconciliation
+                          </p>
+                          <p className="mt-1 text-sm text-slateText">
+                            This shows why the final month total can be higher than the visible
+                            gross-payable row count.
+                          </p>
+                        </div>
+                        <div className="max-h-[22rem] overflow-auto">
+                          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                            <thead className="sticky top-0 bg-slate-100 text-slate-700">
+                              <tr>
+                                <th className="px-3 py-2 font-semibold">Date</th>
+                                <th className="px-3 py-2 font-semibold">Attendance Result</th>
+                                <th className="px-3 py-2 font-semibold">Status Code</th>
+                                <th className="px-3 py-2 font-semibold">Base Payable</th>
+                                <th className="px-3 py-2 font-semibold">Included in Gross</th>
+                                <th className="px-3 py-2 font-semibold">Comp Off Restored</th>
+                                <th className="px-3 py-2 font-semibold">Late Policy Bucket</th>
+                                <th className="px-3 py-2 font-semibold">Final Contribution</th>
+                                <th className="px-3 py-2 font-semibold">Why This Number Appears</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {selectedEmployeeFinalPayableBreakdown.map((item) => (
+                                <tr key={`final-payable-${item.date}`}>
+                                  <td className="px-3 py-2 font-medium text-ink">
+                                    {formatDisplayDate(item.date)} • {item.dayLabel}
+                                  </td>
+                                  <td className="px-3 py-2 text-slateText">
+                                    {item.attendanceClassification}
+                                  </td>
+                                  <td className="px-3 py-2 text-slateText">
+                                    {formatRuleId(item.finalStatusCode)}
+                                  </td>
+                                  <td className="px-3 py-2 text-slateText">
+                                    {item.payableDayImpact.toFixed(2)}
+                                  </td>
+                                  <td className="px-3 py-2 text-slateText">
+                                    {item.includedInGrossPayable ? "Yes" : "No"}
+                                  </td>
+                                  <td className="px-3 py-2 text-slateText">
+                                    {item.compOffRestored > 0
+                                      ? `+${item.compOffRestored.toFixed(2)}`
+                                      : "0.00"}
+                                  </td>
+                                  <td className="px-3 py-2 text-slateText">
+                                    {item.lateDeductionBucketDate ? "Yes" : "No"}
+                                  </td>
+                                  <td className="px-3 py-2 font-semibold text-ink">
+                                    {item.finalContribution.toFixed(2)}
+                                  </td>
+                                  <td className="px-3 py-2 text-slateText">
+                                    {item.explanation}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
+                  </CompactInfoCard>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="mb-3 grid gap-3 lg:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_minmax(0,1.25fr)_auto] lg:items-end">
               <FilterSelect
                 label="Bulk action"
@@ -1680,14 +1912,14 @@ function renderMetricCell(
                     <th className="px-3 py-2 font-semibold">Day</th>
                     <th className="px-3 py-2 font-semibold">In Time</th>
                     <th className="px-3 py-2 font-semibold">Out Time</th>
-                    <th className="px-3 py-2 font-semibold">Working Hours</th>
-                    <th className="px-3 py-2 font-semibold">Detected Issue</th>
-                    <th className="px-3 py-2 font-semibold">Suggested Rule</th>
-                    <th className="px-3 py-2 font-semibold">Current Payroll Impact</th>
-                    <th className="px-3 py-2 font-semibold">Explain</th>
-                    <th className="px-3 py-2 font-semibold">HR Action</th>
-                    <th className="px-3 py-2 font-semibold">HR Comment</th>
-                    <th className="px-3 py-2 font-semibold">Apply</th>
+                        <th className="px-3 py-2 font-semibold">Working Hours</th>
+                        <th className="px-3 py-2 font-semibold">Detected Issue</th>
+                        <th className="px-3 py-2 font-semibold">Suggested Rule</th>
+                        <th className="px-3 py-2 font-semibold">Flags</th>
+                        <th className="px-3 py-2 font-semibold">Current Payroll Impact</th>
+                        <th className="px-3 py-2 font-semibold">HR Action</th>
+                        <th className="px-3 py-2 font-semibold">HR Comment</th>
+                        <th className="px-3 py-2 font-semibold">Apply</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1715,17 +1947,13 @@ function renderMetricCell(
                         <td className="px-3 py-2 text-slateText">{processedRow.working_hours || "Not computed"}</td>
                         <td className="px-3 py-2 text-slateText">{group?.summary || buildProcessedRowIssueSummary(processedRow)}</td>
                         <td className="px-3 py-2 text-slateText">{group ? formatAction(group.suggested_action) : formatRuleId(processedRow.detected_rule_id)}</td>
+                        <td className="px-3 py-2 text-slateText">
+                          {processedRow.derived_flags.length > 0
+                            ? processedRow.derived_flags.map(formatFlag).join(", ")
+                            : "-"}
+                        </td>
                         <td className="px-3 py-2 font-medium text-ink">
                           {processedRow.payroll_impact_label || "Pending calculation"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => openRowExplainability(processedRow, group)}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-slate-50"
-                          >
-                            Explain
-                          </button>
                         </td>
                         <td className="px-3 py-2">
                           {group ? (
@@ -1859,7 +2087,6 @@ function renderMetricCell(
                                 <th className="px-3 py-2 font-semibold">Working Hours</th>
                                 <th className="px-3 py-2 font-semibold">Raw Status</th>
                                 <th className="px-3 py-2 font-semibold">Current Payroll Impact</th>
-                                <th className="px-3 py-2 font-semibold">Explain</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -1875,19 +2102,6 @@ function renderMetricCell(
                                   <td className="px-3 py-2 text-slateText">{candidate.work_duration || "Not computed"}</td>
                                   <td className="px-3 py-2 text-slateText">{candidate.attendance_status || "Not provided"}</td>
                                   <td className="px-3 py-2 font-medium text-ink">{processedRow?.payroll_impact_label || "Pending calculation"}</td>
-                                  <td className="px-3 py-2">
-                                    {processedRow ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => openRowExplainability(processedRow, group)}
-                                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-slate-50"
-                                      >
-                                        Explain
-                                      </button>
-                                    ) : (
-                                      <span className="text-xs text-slateText">-</span>
-                                    )}
-                                  </td>
                                 </tr>
                               )})}
                             </tbody>
@@ -1977,6 +2191,7 @@ function renderMetricCell(
                     <th className="px-3 py-2 font-semibold">Working Hours</th>
                     <th className="px-3 py-2 font-semibold">Final Attendance Classification</th>
                     <th className="px-3 py-2 font-semibold">Rule Applied</th>
+                    <th className="px-3 py-2 font-semibold">Flags</th>
                     <th className="px-3 py-2 font-semibold">Payroll Impact</th>
                   </tr>
                 </thead>
@@ -1997,12 +2212,17 @@ function renderMetricCell(
                         <td className="px-3 py-2 text-slateText" title={buildAttendanceAuditTitle(row)}>
                           {formatRuleId(row.detected_rule_id)}
                         </td>
+                        <td className="px-3 py-2 text-slateText">
+                          {row.derived_flags.length > 0
+                            ? row.derived_flags.map(formatFlag).join(", ")
+                            : "-"}
+                        </td>
                         <td className="px-3 py-2 font-medium text-ink">{row.payroll_impact_label}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={12} className="px-3 py-6 text-center text-slateText">
+                      <td colSpan={13} className="px-3 py-6 text-center text-slateText">
                         No processed attendance rows are available for the current search.
                       </td>
                     </tr>
@@ -2010,90 +2230,6 @@ function renderMetricCell(
                 </tbody>
               </table>
             </div>
-          </CompactInfoCard>
-        </div>
-      ) : null}
-
-      {activeTab === "breakdown" ? (
-        <div className="mt-4 space-y-4">
-          <CompactInfoCard
-            title="Calculation Breakdown"
-            subtitle="Trace final payable from daily attendance results, comp off usage, and late deductions without doing the math manually."
-          >
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,20rem)_1fr] lg:items-end">
-              <FilterSelect
-                label="Employee"
-                value={calculationEmployeeKey}
-                options={employeeRegister.map((employee) => employeeKey(employee))}
-                onChange={setCalculationEmployeeKey}
-              />
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slateText">
-                This tab uses the exact monthly reconciliation outputs from the attendance engine. It does not recalculate payroll separately in the UI.
-              </div>
-            </div>
-
-            {calculationEmployee ? (
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slateText">
-                      Employee Payroll Journey
-                    </p>
-                    <h5 className="mt-1 text-lg font-bold text-ink">
-                      {calculationEmployee.employeeName || calculationEmployee.employeeCode}
-                    </h5>
-                    <p className="mt-1 text-sm text-slateText">
-                      {calculationEmployee.employeeCode || "No employee code"} • {calculationEmployee.gender || "Gender not available"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => backToMonthlySummary(employeeKey(calculationEmployee))}
-                      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
-                    >
-                      ← Back to Monthly Summary
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedEmployeeKey(employeeKey(calculationEmployee))}
-                      className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-semibold text-teal-900 transition hover:bg-teal-100"
-                    >
-                      Sync with Monthly Summary
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-4 space-y-4">
-                  {calculationEmployeeMonthlySummary.length > 0 ? (
-                    calculationEmployeeMonthlySummary.map((item) => (
-                      <CalculationBreakdownPanel
-                        key={`${item.employee_id}-${item.month}`}
-                        summaryItem={item}
-                        rows={filteredRows.filter(
-                          (row) =>
-                            (row.employee_code || row.employee_name || row.record_id) ===
-                              (calculationEmployee.employeeCode || calculationEmployee.employeeName) &&
-                            row.date.startsWith(item.month)
-                        )}
-                        onExplainRow={openRowExplainability}
-                        onOpenRowReview={openRowInReview}
-                      />
-                    ))
-                  ) : (
-                    <CompactEmptyState
-                      title="No monthly breakdown available"
-                      description="The current filter does not contain a complete employee-month summary to explain."
-                    />
-                  )}
-                </div>
-              </div>
-            ) : (
-              <CompactEmptyState
-                title="Select an employee"
-                description="Choose an employee from the monthly summary to open the payroll explanation journey."
-              />
-            )}
           </CompactInfoCard>
         </div>
       ) : null}
@@ -2185,41 +2321,6 @@ function renderMetricCell(
             </CompactInfoCard>
           </div>
         </div>
-      ) : null}
-
-      {metricExplainability ? (
-        <MetricExplainabilityDialog
-          state={metricExplainability}
-          policyRules={policyRules}
-          onClose={() => setMetricExplainability(null)}
-          onBackToMonthlySummary={backToMonthlySummary}
-          onOpenReview={(filter, employeeKeyValue) => {
-            setMetricExplainability(null);
-            if (employeeKeyValue) {
-              const employee =
-                employeeRegister.find(
-                  (item) => employeeKey(item) === employeeKeyValue
-                ) ?? null;
-              if (employee) {
-                openEmployeeMetricReview(employee, filter);
-                return;
-              }
-            }
-            openReviewFilter(filter);
-          }}
-          onOpenRowReview={openRowInReview}
-          onOpenRowExplain={openRowExplainability}
-        />
-      ) : null}
-
-      {rowExplainability ? (
-        <RowExplainabilityDialog
-          state={rowExplainability}
-          policyRules={policyRules}
-          onClose={() => setRowExplainability(null)}
-          onBackToMonthlySummary={backToMonthlySummary}
-          onOpenRowReview={openRowInReview}
-        />
       ) : null}
     </section>
   );
@@ -2458,885 +2559,6 @@ function InfoLine({ label, value }: InfoLineProps) {
   );
 }
 
-type CalculationBreakdownPanelProps = {
-  summaryItem: AttendanceEmployeeMonthlySummaryItem;
-  rows: AttendanceProcessedRow[];
-  onExplainRow: (row: AttendanceProcessedRow) => void;
-  onOpenRowReview: (row: AttendanceProcessedRow, filter: ReviewFilter) => void;
-};
-
-function CalculationBreakdownPanel({
-  summaryItem,
-  rows,
-  onExplainRow,
-  onOpenRowReview,
-}: CalculationBreakdownPanelProps) {
-  const explainability = summaryItem.explainability;
-  const breakdown = explainability?.calculation_breakdown;
-  const lateExplanation = explainability?.late_deduction;
-  const compOffLedger = explainability?.comp_off_ledger ?? [];
-  const compOffUsageTrail = explainability?.comp_off_usage_trail ?? [];
-  const presentPayableDays = roundMetric(summaryItem.present_count * 1);
-  const halfDayPayableDays = roundMetric(summaryItem.half_day_count * 0.5);
-  const absentPayableDays = 0;
-  const paidWeekOffPayableDays = roundMetric(summaryItem.paid_week_off_count * 1);
-  const unpaidWeekOffPayableDays = 0;
-  const paidHolidayPayableDays = roundMetric(summaryItem.paid_holiday_count * 1);
-  const unpaidHolidayPayableDays = 0;
-  const leaveAdjustedDays = rows.filter(
-    (row) => normalizeText(row.hr_override_status) === "leave adjusted"
-  ).length;
-  const leaveAdjustedPayableDays = roundMetric(
-    rows
-      .filter((row) => normalizeText(row.hr_override_status) === "leave adjusted")
-      .reduce((sum, row) => sum + row.payable_day_impact, 0)
-  );
-  const compOffTotalAdded = roundMetric(
-    (breakdown?.comp_off_adjusted_against_absent_days ?? 0) +
-      (breakdown?.comp_off_adjusted_against_late_days ?? 0)
-  );
-  const lateDeductionBeforeCompOff =
-    lateExplanation?.deductions_before_comp_off ?? summaryItem.late_penalty_deductions;
-
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-soft">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slateText">
-            Calculation Breakdown
-          </p>
-          <h6 className="mt-1 text-base font-bold text-ink">
-            {formatMonthLabel(summaryItem.month)}
-          </h6>
-          <p className="mt-1 text-sm text-slateText">
-            Gross payable, comp off usage, late deductions, and final payable all come from the reconciled monthly attendance output.
-          </p>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-3">
-          <MiniMetric label="Gross Payable" value={formatMetricValue(summaryItem.gross_payable_days)} />
-          <MiniMetric label="Late Deduction" value={formatMetricValue(summaryItem.late_penalty_after_comp_off)} />
-          <MiniMetric label="Final Payable" value={formatMetricValue(summaryItem.payable_days)} />
-        </div>
-      </div>
-
-      {breakdown ? (
-        <div className="mt-4 grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-          <div className="space-y-4">
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-ink">Final Payable Story</p>
-              <p className="mt-1 text-sm text-slateText">
-                This is the full monthly trail from attendance buckets to the final payroll-ready day count.
-              </p>
-              <div className="mt-3 space-y-2 text-sm text-slateText">
-                <FormulaLine label="Month Days" value={breakdown.calendar_days} positive />
-                <FormulaLine
-                  label={`Present Days: ${summaryItem.present_count} × 1.0`}
-                  value={presentPayableDays}
-                  positive
-                />
-                <FormulaLine
-                  label={`Half Days: ${summaryItem.half_day_count} × 0.5`}
-                  value={halfDayPayableDays}
-                  positive
-                />
-                <FormulaLine
-                  label={`Absent Days: ${summaryItem.absent_count} × 0`}
-                  value={absentPayableDays}
-                  positive
-                />
-                <FormulaLine
-                  label={`Payable Sundays / WOs: ${summaryItem.paid_week_off_count} × 1.0`}
-                  value={paidWeekOffPayableDays}
-                  positive
-                />
-                <FormulaLine
-                  label={`Unpaid Sundays / WOs: ${summaryItem.unpaid_week_off_count} × 0`}
-                  value={unpaidWeekOffPayableDays}
-                  positive
-                />
-                <FormulaLine
-                  label={`Paid Holidays: ${summaryItem.paid_holiday_count} × 1.0`}
-                  value={paidHolidayPayableDays}
-                  positive
-                />
-                <FormulaLine
-                  label={`Unpaid Holidays: ${summaryItem.unpaid_holiday_count} × 0`}
-                  value={unpaidHolidayPayableDays}
-                  positive
-                />
-                <FormulaLine label="Gross Payable" value={breakdown.gross_payable_days} positive emphasize />
-                <FormulaLine
-                  label={`Late Deduction: ${formatMetricValue(lateDeductionBeforeCompOff)}`}
-                  value={lateDeductionBeforeCompOff}
-                />
-                <FormulaLine
-                  label="Comp Off Added Back"
-                  value={compOffTotalAdded}
-                  positive
-                />
-                <FormulaLine
-                  label={`Leave Adjustment (${leaveAdjustedDays} day${leaveAdjustedDays === 1 ? "" : "s"})`}
-                  value={leaveAdjustedPayableDays}
-                  positive
-                  muted
-                />
-                <FormulaLine label="Final Payable" value={breakdown.final_payable_days} positive emphasize />
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-ink">Attendance Summary</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <InfoLine label="Present Days" value={String(summaryItem.present_count)} />
-                <InfoLine label="Half Days" value={String(summaryItem.half_day_count)} />
-                <InfoLine label="Absent Days" value={String(summaryItem.absent_count)} />
-                <InfoLine label="Paid Sundays" value={String(summaryItem.paid_week_off_count)} />
-                <InfoLine label="Unpaid Sundays" value={String(summaryItem.unpaid_week_off_count)} />
-                <InfoLine label="Paid Holidays" value={String(summaryItem.paid_holiday_count)} />
-                <InfoLine label="Pending Review" value={String(summaryItem.pending_review_count)} />
-                <InfoLine label="Early Login" value={String(summaryItem.early_login_count ?? 0)} />
-                <InfoLine label="Late Flags" value={String(summaryItem.late_entry_count)} />
-                <InfoLine label="Comp Off Balance" value={formatMetricValue(summaryItem.comp_off_balance)} />
-              </div>
-            </section>
-          </div>
-
-          <div className="space-y-4">
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-ink">Late Deduction Trail</p>
-              {lateExplanation ? (
-                <div className="mt-3 space-y-3">
-                  <RuleExplanationCard
-                    title={lateExplanation.late_rule_label}
-                    condition={`Late cutoff: ${lateExplanation.late_cutoff_time}. Every three late flags reduce payable days by one.`}
-                    result={lateExplanation.formula_text}
-                    payrollImpact={`Payroll Impact: -${formatMetricValue(lateExplanation.deductions_after_comp_off)} day(s) after comp off adjustment.`}
-                  />
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {buildLateDeductionGroups(lateExplanation.late_source_dates).map((group, index) => (
-                      <TimelineCard
-                        key={`late-group-${index}`}
-                        title={`Group ${index + 1}`}
-                        subtitle={group.qualifies ? "This group creates one late deduction." : "This group is below the 3-late threshold and does not create a deduction yet."}
-                        body={group.dates.join(" • ")}
-                        badges={[
-                          `${group.dates.length} late date${group.dates.length === 1 ? "" : "s"}`,
-                          group.qualifies ? "Deduction Created: 1 Day" : "Deduction Created: 0 Day"
-                        ]}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {lateExplanation.late_source_dates.length > 0 ? (
-                      lateExplanation.late_source_dates.map((date, index) => (
-                        <span
-                          key={`${date}-${index}`}
-                          className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900"
-                        >
-                          {formatShortDate(date)}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-sm text-slateText">No late dates were recorded for this month.</span>
-                    )}
-                  </div>
-                  {lateExplanation.comp_off_adjusted_against_late_days > 0 ? (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
-                      <p className="font-semibold">
-                        Comp off offset applied: +{formatMetricValue(lateExplanation.comp_off_adjusted_against_late_days)} payable day(s)
-                      </p>
-                      <p className="mt-1">
-                        Available comp off credits reduced the late deduction, so the final payroll deduction is only{" "}
-                        {formatMetricValue(lateExplanation.deductions_after_comp_off)} day(s).
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-ink">Comp Off Earned</p>
-              <div className="mt-3 space-y-3">
-                {compOffLedger.length > 0 ? (
-                  compOffLedger.map((item) => (
-                    <TimelineCard
-                      key={`${item.source_record_id}-${item.source_date}`}
-                      title={`${formatShortDate(item.source_date)} • ${describeCompOffDayType(item.source_date)}`}
-                      subtitle={`${item.source_attendance_result} • ${item.source_reason}`}
-                      body={`Payroll Impact: Comp Off Earned +${formatMetricValue(item.earned_value)}`}
-                      badges={[
-                        `Hours: ${item.source_working_hours || "-"}`,
-                        `Earned: ${formatMetricValue(item.earned_value)}`,
-                        `Used: ${formatMetricValue(item.used_value)}`,
-                        `Balance: ${formatMetricValue(item.balance_value)}`
-                      ]}
-                    />
-                  ))
-                ) : (
-                  <p className="text-sm text-slateText">No comp off credits were earned in this month.</p>
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-ink">Comp Off Used</p>
-              <div className="mt-3 space-y-3">
-                {compOffUsageTrail.length > 0 ? (
-                  compOffUsageTrail.map((trailItem, index) => (
-                    <TimelineCard
-                      key={`${trailItem.source_record_id || trailItem.source_kind}-${trailItem.adjusted_record_id}-${index}`}
-                      title={`Comp Off Earned On ${trailItem.source_date ? formatShortDate(trailItem.source_date) : "Opening Balance"}`}
-                      subtitle={
-                        trailItem.source_date
-                          ? `${trailItem.source_attendance_result} • ${trailItem.source_reason}`
-                          : "Opening comp off balance carried forward from the previous month."
-                      }
-                      body={`${describeCompOffAdjustedAgainstExplanation(trailItem)} • Payroll Impact: ${humanizePayrollImpact(trailItem.payroll_impact)}`}
-                      badges={[
-                        `Earned: ${formatMetricValue(trailItem.earned_value)}`,
-                        `Used Now: ${formatMetricValue(trailItem.adjustment_value)}`,
-                        `Adjusted Against: ${describeCompOffAdjustedAgainst(trailItem)}`,
-                        trailItem.source_working_hours ? `Hours: ${trailItem.source_working_hours}` : "Carry Forward"
-                      ]}
-                    />
-                  ))
-                ) : (
-                  <p className="text-sm text-slateText">No comp off credits were consumed in this month.</p>
-                )}
-              </div>
-            </section>
-          </div>
-        </div>
-      ) : null}
-
-      <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-        <p className="text-sm font-semibold text-ink">Payroll-Affecting Attendance Records</p>
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-              <thead className="bg-slate-100 text-slate-700">
-                <tr>
-                  <th className="px-3 py-2 font-semibold">Date</th>
-                  <th className="px-3 py-2 font-semibold">Day</th>
-                  <th className="px-3 py-2 font-semibold">Employee ID</th>
-                  <th className="px-3 py-2 font-semibold">Employee Name</th>
-                  <th className="px-3 py-2 font-semibold">In Time</th>
-                  <th className="px-3 py-2 font-semibold">Out Time</th>
-                  <th className="px-3 py-2 font-semibold">Working Hours</th>
-                  <th className="px-3 py-2 font-semibold">Attendance Result</th>
-                  <th className="px-3 py-2 font-semibold">Rule Applied</th>
-                  <th className="px-3 py-2 font-semibold">Payroll Impact</th>
-                  <th className="px-3 py-2 font-semibold">HR Action</th>
-                  <th className="px-3 py-2 font-semibold">HR Comment</th>
-                  <th className="px-3 py-2 font-semibold">Review</th>
-                  <th className="px-3 py-2 font-semibold">Explain</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-              {rows.length > 0 ? (
-                rows.map((row) => (
-                  <tr key={row.record_id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium text-ink">{formatDisplayDate(row.date)}</td>
-                    <td className="px-3 py-2 text-slateText">{formatDayLabel(row.date)}</td>
-                    <td className="px-3 py-2 font-medium text-ink">{row.employee_code || "-"}</td>
-                    <td className="px-3 py-2 text-ink">{row.employee_name || row.employee_code}</td>
-                    <td className="px-3 py-2 text-slateText">{row.in_time || "-"}</td>
-                    <td className="px-3 py-2 text-slateText">{row.out_time || "-"}</td>
-                    <td className="px-3 py-2 text-slateText">{row.working_hours || "-"}</td>
-                    <td className="px-3 py-2 text-ink">{row.attendance_classification}</td>
-                    <td className="px-3 py-2 text-slateText">{formatRuleId(row.detected_rule_id)}</td>
-                    <td className="px-3 py-2 font-medium text-ink">{row.payroll_impact_label}</td>
-                    <td className="px-3 py-2 text-slateText">{formatHrAction(row)}</td>
-                    <td className="px-3 py-2 text-slateText">{formatHrComment(row)}</td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => onOpenRowReview(row, inferReviewFilterForRow(row))}
-                        className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-900 transition hover:bg-teal-100"
-                      >
-                        Open in HR Review
-                      </button>
-                    </td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => onExplainRow(row)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-slate-50"
-                      >
-                        Explain
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={13} className="px-3 py-6 text-center text-slateText">
-                    No payroll-impacting rows are available for this employee-month.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </section>
-  );
-}
-
-type MetricExplainabilityDialogProps = {
-  state: MetricExplainabilityState;
-  policyRules: AttendancePolicyRule[];
-  onClose: () => void;
-  onBackToMonthlySummary: (employeeKey?: string | null) => void;
-  onOpenReview: (filter: ReviewFilter, employeeKey?: string | null) => void;
-  onOpenRowReview: (row: AttendanceProcessedRow, filter: ReviewFilter) => void;
-  onOpenRowExplain: (row: AttendanceProcessedRow) => void;
-};
-
-function MetricExplainabilityDialog({
-  state,
-  policyRules,
-  onClose,
-  onBackToMonthlySummary,
-  onOpenReview,
-  onOpenRowReview,
-  onOpenRowExplain,
-}: MetricExplainabilityDialogProps) {
-  const relevantRows = filterRowsForMetric(state.metric, state.sourceRows);
-  const explanation = buildMetricRuleExplanation(state.metric, policyRules, state.monthlySummaries);
-  const compOffTrail = state.monthlySummaries.flatMap(
-    (item) => item.explainability?.comp_off_usage_trail ?? []
-  );
-  const compOffLedger = state.monthlySummaries.flatMap(
-    (item) => item.explainability?.comp_off_ledger ?? []
-  );
-  const lateExplanation = aggregateLateDeductionExplanation(state.monthlySummaries);
-  const finalPayableStory = buildFinalPayableStory(state.monthlySummaries, relevantRows);
-  const lateGroups = lateExplanation
-    ? buildLateDeductionGroups(lateExplanation.late_source_dates)
-    : [];
-
-  return (
-    <DialogShell title={state.title} subtitle="Every number here is traced back to the processed attendance working.">
-      <div className="space-y-4">
-        <RuleExplanationCard
-          title={explanation.title}
-          condition={explanation.condition}
-          result={explanation.result}
-          payrollImpact={explanation.payrollImpact}
-        />
-
-        {state.metric === "comp_off_adjusted" ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-sm font-semibold text-ink">Comp Off Adjustment Mapping</p>
-            <div className="mt-3 space-y-3">
-              {compOffTrail.length > 0 ? (
-                compOffTrail.map((trailItem, index) => (
-                  <TimelineCard
-                    key={`${trailItem.source_record_id || trailItem.source_kind}-${trailItem.adjusted_record_id}-${index}`}
-                    title={`Comp Off Earned On: ${trailItem.source_date ? formatShortDate(trailItem.source_date) : "Opening Balance"}`}
-                    subtitle={trailItem.source_reason || "Comp off credit was available to use."}
-                    body={`${describeCompOffAdjustedAgainstExplanation(trailItem)} • Payroll Impact: ${humanizePayrollImpact(trailItem.payroll_impact)}`}
-                    badges={[
-                      `Used: ${formatMetricValue(trailItem.adjustment_value)}`,
-                      `Adjusted Against: ${describeCompOffAdjustedAgainst(trailItem)}`,
-                      trailItem.source_working_hours ? `Hours: ${trailItem.source_working_hours}` : "Carry Forward"
-                    ]}
-                  />
-                ))
-              ) : (
-                <p className="text-sm text-slateText">No comp off adjustments were applied in the current selection.</p>
-              )}
-            </div>
-          </section>
-        ) : null}
-
-        {state.metric === "comp_off_balance" ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-sm font-semibold text-ink">Unused Comp Off Balance</p>
-            <div className="mt-3 space-y-3">
-              {compOffLedger.filter((item) => item.balance_value > 0).length > 0 ? (
-                compOffLedger
-                  .filter((item) => item.balance_value > 0)
-                  .map((item) => (
-                    <TimelineCard
-                      key={`${item.source_record_id}-${item.source_date}`}
-                      title={`${formatShortDate(item.source_date)} • ${item.source_attendance_result}`}
-                      subtitle={item.source_reason}
-                      badges={[
-                        `Earned: ${formatMetricValue(item.earned_value)}`,
-                        `Used: ${formatMetricValue(item.used_value)}`,
-                        `Remaining: ${formatMetricValue(item.balance_value)}`
-                      ]}
-                    />
-                  ))
-              ) : (
-                <p className="text-sm text-slateText">No unused comp off balance remains in the current selection.</p>
-              )}
-            </div>
-          </section>
-        ) : null}
-
-        {state.metric === "comp_off_earned" ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-sm font-semibold text-ink">Comp Off Earned Trail</p>
-            <div className="mt-3 space-y-3">
-              {compOffLedger.length > 0 ? (
-                compOffLedger.map((item) => (
-                  <TimelineCard
-                    key={`${item.source_record_id}-${item.source_date}`}
-                    title={formatShortDate(item.source_date)}
-                    subtitle={`${describeCompOffDayType(item.source_date)} • ${item.source_attendance_result}`}
-                    body={`Reason: ${item.source_reason} • Payroll Impact: Comp Off Earned +${formatMetricValue(item.earned_value)}`}
-                    badges={[
-                      `Working Hours: ${item.source_working_hours || "-"}`,
-                      `Comp Off Earned: +${formatMetricValue(item.earned_value)}`
-                    ]}
-                  />
-                ))
-              ) : (
-                <p className="text-sm text-slateText">No comp off credits were earned in the current selection.</p>
-              )}
-            </div>
-            <p className="mt-3 text-sm font-semibold text-ink">
-              Total Comp Off Earned = {formatMetricValue(compOffLedger.reduce((sum, item) => sum + item.earned_value, 0))}
-            </p>
-          </section>
-        ) : null}
-
-        {state.metric === "late_deduction" && lateExplanation ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-sm font-semibold text-ink">{lateExplanation.late_rule_label}</p>
-            <p className="mt-2 text-sm text-slateText">{lateExplanation.formula_text}</p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              {lateGroups.map((group, index) => (
-                <TimelineCard
-                  key={`late-dialog-group-${index}`}
-                  title={`Group ${index + 1}`}
-                  subtitle={group.qualifies ? "This group creates 1 deduction day." : "This group is waiting for more late flags before it creates a deduction."}
-                  body={group.dates.join(" • ")}
-                  badges={[
-                    `${group.dates.length} late date${group.dates.length === 1 ? "" : "s"}`,
-                    group.qualifies ? "Deduction Created: 1 Day" : "Deduction Created: 0 Day"
-                  ]}
-                />
-              ))}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {lateExplanation.late_source_dates.map((date, index) => (
-                <span
-                  key={`${date}-${index}`}
-                  className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900"
-                >
-                  {formatShortDate(date)}
-                </span>
-              ))}
-            </div>
-            {lateExplanation.comp_off_adjusted_against_late_days > 0 ? (
-              <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
-                <p className="font-semibold">
-                  Comp Off Offset Applied = +{formatMetricValue(lateExplanation.comp_off_adjusted_against_late_days)}
-                </p>
-                <p className="mt-1">
-                  Some late deductions were neutralized by available comp off, so the remaining payroll deduction is{" "}
-                  {formatMetricValue(lateExplanation.deductions_after_comp_off)} day(s).
-                </p>
-              </div>
-            ) : null}
-            <p className="mt-3 text-sm font-semibold text-ink">
-              Payroll Impact: -{formatMetricValue(lateExplanation.deductions_after_comp_off)} day(s)
-            </p>
-          </section>
-        ) : null}
-
-        {state.metric === "final_payable" ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-sm font-semibold text-ink">Final Payable Calculation</p>
-            <p className="mt-2 text-sm text-slateText">
-              This panel explains exactly how the payroll-ready day count was produced for the selected employee or filtered view.
-            </p>
-            <div className="mt-3 space-y-2 text-sm text-slateText">
-              <FormulaLine label="Month Days" value={finalPayableStory.monthDays} positive />
-              <FormulaLine label={`Present Days: ${finalPayableStory.presentDays} × 1.0`} value={finalPayableStory.presentValue} positive />
-              <FormulaLine label={`Half Days: ${finalPayableStory.halfDays} × 0.5`} value={finalPayableStory.halfValue} positive />
-              <FormulaLine label={`Absent Days: ${finalPayableStory.absentDays} × 0`} value={0} positive />
-              <FormulaLine label={`Comp Off Added`} value={finalPayableStory.compOffAdded} positive />
-              <FormulaLine label={`Late Deduction`} value={finalPayableStory.lateDeduction} />
-              <FormulaLine label={`Leave Adjustment`} value={finalPayableStory.leaveAdjustedValue} positive muted />
-              <FormulaLine label="Final Payable" value={finalPayableStory.finalPayable} positive emphasize />
-            </div>
-          </section>
-        ) : null}
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-ink">Source Records</p>
-              <p className="mt-1 text-sm text-slateText">
-                These are the records currently contributing to {metricCardLabel(state.metric).toLowerCase()}.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                onOpenReview(metricToReviewFilter(state.metric), state.employeeKey ?? null)
-              }
-              className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-semibold text-teal-900 transition hover:bg-teal-100"
-            >
-              Open in HR Review
-            </button>
-          </div>
-
-          <div className="mt-3 max-h-[22rem] overflow-auto rounded-xl border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-              <thead className="sticky top-0 bg-slate-100 text-slate-700">
-                <tr>
-                  <th className="px-3 py-2 font-semibold">Date</th>
-                  <th className="px-3 py-2 font-semibold">Day</th>
-                  <th className="px-3 py-2 font-semibold">Employee ID</th>
-                  <th className="px-3 py-2 font-semibold">Employee Name</th>
-                  <th className="px-3 py-2 font-semibold">In Time</th>
-                  <th className="px-3 py-2 font-semibold">Out Time</th>
-                  <th className="px-3 py-2 font-semibold">Working Hours</th>
-                  {state.metric === "early_login" ? (
-                    <>
-                      <th className="px-3 py-2 font-semibold">Scheduled Start</th>
-                      <th className="px-3 py-2 font-semibold">Minutes Early</th>
-                    </>
-                  ) : null}
-                  <th className="px-3 py-2 font-semibold">Result</th>
-                  <th className="px-3 py-2 font-semibold">Rule Applied</th>
-                  <th className="px-3 py-2 font-semibold">Payroll Impact</th>
-                  <th className="px-3 py-2 font-semibold">HR Action</th>
-                  <th className="px-3 py-2 font-semibold">HR Comment</th>
-                  <th className="px-3 py-2 font-semibold">Review</th>
-                  <th className="px-3 py-2 font-semibold">Explain</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {relevantRows.length > 0 ? (
-                  relevantRows.map((row) => (
-                    <tr key={row.record_id} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-ink">{formatDisplayDate(row.date)}</td>
-                      <td className="px-3 py-2 text-slateText">{formatDayLabel(row.date)}</td>
-                      <td className="px-3 py-2 font-medium text-ink">{row.employee_code || "-"}</td>
-                      <td className="px-3 py-2 text-ink">{row.employee_name || row.employee_code}</td>
-                      <td className="px-3 py-2 text-slateText">{row.in_time || "-"}</td>
-                      <td className="px-3 py-2 text-slateText">{row.out_time || "-"}</td>
-                      <td className="px-3 py-2 text-slateText">{row.working_hours || "-"}</td>
-                      {state.metric === "early_login" ? (
-                        <>
-                          <td className="px-3 py-2 text-slateText">10:00 AM</td>
-                          <td className="px-3 py-2 text-slateText">{formatMinutesEarly(row)}</td>
-                        </>
-                      ) : null}
-                      <td className="px-3 py-2 text-ink">{row.attendance_classification}</td>
-                      <td className="px-3 py-2 text-slateText">{formatRuleId(row.detected_rule_id)}</td>
-                      <td className="px-3 py-2 font-medium text-ink">{row.payroll_impact_label}</td>
-                      <td className="px-3 py-2 text-slateText">{formatHrAction(row)}</td>
-                      <td className="px-3 py-2 text-slateText">{formatHrComment(row)}</td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => onOpenRowReview(row, metricToReviewFilter(state.metric))}
-                          className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-900 transition hover:bg-teal-100"
-                        >
-                          Open in HR Review
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => onOpenRowExplain(row)}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-slate-50"
-                        >
-                          Explain
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={state.metric === "early_login" ? 15 : 13} className="px-3 py-6 text-center text-slateText">
-                      No source records are contributing to this metric in the current filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-
-      <DialogFooter
-        onClose={onClose}
-        secondaryActionLabel="← Back to Monthly Summary"
-        onSecondaryAction={() => onBackToMonthlySummary(state.employeeKey ?? null)}
-      />
-    </DialogShell>
-  );
-}
-
-type RowExplainabilityDialogProps = {
-  state: RowExplainabilityState;
-  policyRules: AttendancePolicyRule[];
-  onClose: () => void;
-  onBackToMonthlySummary: (employeeKey?: string | null) => void;
-  onOpenRowReview: (row: AttendanceProcessedRow, filter: ReviewFilter) => void;
-};
-
-function RowExplainabilityDialog({
-  state,
-  policyRules,
-  onClose,
-  onBackToMonthlySummary,
-  onOpenRowReview,
-}: RowExplainabilityDialogProps) {
-  const { row, group } = state;
-  return (
-    <DialogShell
-      title={`Explain • ${row.employee_name || row.employee_code || "Attendance Row"}`}
-      subtitle="This is the decision trail for the selected attendance record."
-    >
-      <div className="space-y-4">
-        <RuleExplanationCard
-          title={formatRuleId(row.detected_rule_id)}
-          condition={buildRowTriggerCondition(row, policyRules)}
-          result={`Result: ${row.attendance_classification}`}
-          payrollImpact={`Payroll Impact: ${row.payroll_impact_label || "Pending calculation"}`}
-        />
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-sm font-semibold text-ink">Attendance Data</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <InfoLine label="Date" value={formatDisplayDate(row.date)} />
-            <InfoLine label="Day" value={formatDayLabel(row.date)} />
-            <InfoLine label="In Time" value={row.in_time || "Missing"} />
-            <InfoLine label="Out Time" value={row.out_time || "Missing"} />
-            <InfoLine label="Working Hours" value={row.working_hours || "Not computed"} />
-            <InfoLine label="Raw Status" value={row.raw_status || "Not provided"} />
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-sm font-semibold text-ink">Threshold Used</p>
-          <p className="mt-2 text-sm text-slateText">{describeThresholdsForRow(row, policyRules)}</p>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-sm font-semibold text-ink">HR Review Availability</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <InfoLine label="Current HR Action" value={formatHrAction(row)} />
-            <InfoLine label="Current HR Comment" value={formatHrComment(row)} />
-            <InfoLine
-              label="Can HR Change This?"
-              value={
-                canHrAdjustRow(row, group)
-                  ? "Yes, through the existing HR Review flow."
-                  : "No active HR review action is suggested for this row right now."
-              }
-            />
-            <InfoLine
-              label="Review Guidance"
-              value={
-                canHrAdjustRow(row, group)
-                  ? "Use Open in HR Review to regularize this row without leaving context."
-                  : "This row is informational or already finalized unless a broader exception review is needed."
-              }
-            />
-          </div>
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => onOpenRowReview(row, inferReviewFilterForRow(row, group))}
-              className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-semibold text-teal-900 transition hover:bg-teal-100"
-            >
-              Open in HR Review
-            </button>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-sm font-semibold text-ink">Decision Trail</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {row.derived_flags.map((flag, index) => (
-              <span
-                key={`${flag}-${index}`}
-                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900"
-              >
-                {formatFlag(flag)}
-              </span>
-            ))}
-            {row.anomaly_flags.map((flag, index) => (
-              <span
-                key={`${flag}-${index}`}
-                className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900"
-              >
-                {formatFlag(flag)}
-              </span>
-            ))}
-            {row.derived_flags.length === 0 && row.anomaly_flags.length === 0 ? (
-              <span className="text-sm text-slateText">No extra flags were recorded for this row.</span>
-            ) : null}
-          </div>
-          <p className="mt-3 text-sm text-slateText">{row.rule_explanation || "No additional explanation was recorded for this rule."}</p>
-          {group ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slateText">
-              <p className="font-semibold text-ink">{group.summary}</p>
-              <p className="mt-1">{group.details}</p>
-            </div>
-          ) : null}
-        </section>
-      </div>
-
-      <DialogFooter
-        onClose={onClose}
-        secondaryActionLabel="← Back to Employee Row"
-        onSecondaryAction={() =>
-          onBackToMonthlySummary(row.employee_code || row.employee_name || row.record_id)
-        }
-      />
-    </DialogShell>
-  );
-}
-
-type DialogShellProps = {
-  title: string;
-  subtitle: string;
-  children: ReactNode;
-};
-
-function DialogShell({ title, subtitle, children }: DialogShellProps) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="max-h-[88vh] w-full max-w-6xl overflow-hidden rounded-[1.75rem] border border-white/70 bg-white shadow-2xl"
-      >
-        <div className="border-b border-slate-200 px-6 py-5">
-          <h4 className="text-xl font-bold text-ink">{title}</h4>
-          <p className="mt-1 text-sm text-slateText">{subtitle}</p>
-        </div>
-        <div className="max-h-[calc(88vh-7rem)] overflow-y-auto px-6 py-5">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function DialogFooter({
-  onClose,
-  secondaryActionLabel,
-  onSecondaryAction,
-}: {
-  onClose: () => void;
-  secondaryActionLabel?: string;
-  onSecondaryAction?: () => void;
-}) {
-  return (
-    <div className="mt-5 flex flex-wrap justify-between gap-3">
-      {secondaryActionLabel && onSecondaryAction ? (
-        <button
-          type="button"
-          onClick={onSecondaryAction}
-          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
-        >
-          {secondaryActionLabel}
-        </button>
-      ) : (
-        <span />
-      )}
-      <button
-        type="button"
-        onClick={onClose}
-        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
-      >
-        Close
-      </button>
-    </div>
-  );
-}
-
-type RuleExplanationCardProps = {
-  title: string;
-  condition: string;
-  result: string;
-  payrollImpact: string;
-};
-
-function RuleExplanationCard({
-  title,
-  condition,
-  result,
-  payrollImpact,
-}: RuleExplanationCardProps) {
-  return (
-    <section className="rounded-2xl border border-teal-200 bg-teal-50/70 p-4">
-      <p className="text-sm font-semibold text-teal-900">{title}</p>
-      <p className="mt-2 text-sm text-teal-900/90">{condition}</p>
-      <p className="mt-2 text-sm font-medium text-teal-950">{result}</p>
-      <p className="mt-2 text-sm font-semibold text-teal-950">{payrollImpact}</p>
-    </section>
-  );
-}
-
-type TimelineCardProps = {
-  title: string;
-  subtitle: string;
-  body?: string;
-  badges?: string[];
-};
-
-function TimelineCard({ title, subtitle, body, badges = [] }: TimelineCardProps) {
-  return (
-    <article className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-      <p className="text-sm font-semibold text-ink">{title}</p>
-      <p className="mt-1 text-sm text-slateText">{subtitle}</p>
-      {body ? <p className="mt-2 text-sm text-ink">{body}</p> : null}
-      {badges.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {badges.map((badge, index) => (
-            <span
-              key={`${badge}-${index}`}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
-            >
-              {badge}
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-type FormulaLineProps = {
-  label: string;
-  value: number;
-  positive?: boolean;
-  emphasize?: boolean;
-  muted?: boolean;
-};
-
-function FormulaLine({
-  label,
-  value,
-  positive = false,
-  emphasize = false,
-  muted = false,
-}: FormulaLineProps) {
-  return (
-    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-      <span className={`text-sm ${emphasize ? "font-semibold text-ink" : muted ? "text-slate-500" : "text-slateText"}`}>
-        {label}
-      </span>
-      <span className={`text-sm ${emphasize ? "font-bold text-ink" : muted ? "font-medium text-slate-500" : "font-semibold text-ink"}`}>
-        {positive ? "" : "-"}
-        {formatMetricValue(value)}
-      </span>
-    </div>
-  );
-}
-
 function employeeKey(employee: EmployeeAttendanceRegisterRow) {
   return employee.employeeCode || employee.employeeName;
 }
@@ -3357,10 +2579,6 @@ function formatAction(actionKey: string) {
         .replaceAll("_", " ")
         .replace(/\b\w/g, (character) => character.toUpperCase())
     : "No action selected";
-}
-
-function normalizeText(value?: string | null) {
-  return (value || "").trim().toLowerCase();
 }
 
 function formatAdministrativeScope(item: AttendanceAdministrativeException) {
@@ -3473,200 +2691,6 @@ function reviewFilterLabel(value: ReviewFilter) {
   return staticLabels[value];
 }
 
-function parseTimeToMinutes(value?: string | null) {
-  const normalized = (value || "").trim();
-  if (!normalized) {
-    return null;
-  }
-
-  const twelveHourMatch = normalized.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
-  if (twelveHourMatch) {
-    let hours = Number(twelveHourMatch[1]);
-    const minutes = Number(twelveHourMatch[2]);
-    const meridiem = twelveHourMatch[3].toUpperCase();
-
-    if (Number.isNaN(hours) || Number.isNaN(minutes)) {
-      return null;
-    }
-
-    if (meridiem === "AM" && hours === 12) {
-      hours = 0;
-    } else if (meridiem === "PM" && hours !== 12) {
-      hours += 12;
-    }
-
-    return hours * 60 + minutes;
-  }
-
-  const twentyFourHourMatch = normalized.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-  if (twentyFourHourMatch) {
-    const hours = Number(twentyFourHourMatch[1]);
-    const minutes = Number(twentyFourHourMatch[2]);
-    if (Number.isNaN(hours) || Number.isNaN(minutes)) {
-      return null;
-    }
-    return hours * 60 + minutes;
-  }
-
-  return null;
-}
-
-function isEarlyLoginExplainRow(row: AttendanceProcessedRow) {
-  if (row.derived_flags.includes("early_login")) {
-    return true;
-  }
-
-  const inTimeMinutes = parseTimeToMinutes(row.in_time);
-  if (inTimeMinutes === null) {
-    return false;
-  }
-
-  return inTimeMinutes < 10 * 60;
-}
-
-function formatMinutesEarly(row: AttendanceProcessedRow) {
-  const inTimeMinutes = parseTimeToMinutes(row.in_time);
-  if (inTimeMinutes === null) {
-    return "-";
-  }
-
-  const minutesEarly = 10 * 60 - inTimeMinutes;
-  if (minutesEarly <= 0) {
-    return "0 min";
-  }
-
-  return `${minutesEarly} min early`;
-}
-
-function formatHrAction(row: AttendanceProcessedRow) {
-  const normalizedOverride = (row.hr_override_status || "").trim();
-  if (normalizedOverride) {
-    return normalizedOverride;
-  }
-
-  const normalizedSource = normalizeText(row.action_source);
-  if (normalizedSource.includes("holiday")) {
-    return "Holiday Marked";
-  }
-  if (normalizedSource.includes("administrative")) {
-    return "Administrative Override";
-  }
-  if (normalizedSource.includes("hr review")) {
-    return "HR Reviewed";
-  }
-
-  return "No HR action";
-}
-
-function formatHrComment(row: AttendanceProcessedRow) {
-  return (
-    row.action_reason ||
-    row.action_remarks ||
-    row.remarks ||
-    "No HR comment recorded"
-  );
-}
-
-function canHrAdjustRow(
-  row: AttendanceProcessedRow,
-  group?: AttendanceExceptionGroup | null
-) {
-  if (group?.requires_review || (group?.action_options?.length ?? 0) > 0) {
-    return true;
-  }
-
-  if (row.final_status_code === "irregular_review") {
-    return true;
-  }
-
-  return (
-    row.derived_flags.some((flag) =>
-      ["late_entry", "missing_in_time", "missing_out_time", "early_logout"].includes(flag)
-    ) ||
-    row.anomaly_flags.some((flag) =>
-      [
-        "duplicate_punches",
-        "multiple_entries_same_employee_date",
-        "invalid_duration",
-        "negative_duration",
-        "overnight_punch",
-        "impossible_overnight_shift",
-      ].includes(flag)
-    )
-  );
-}
-
-function inferReviewFilterForRow(
-  row: AttendanceProcessedRow,
-  group?: AttendanceExceptionGroup | null
-): ReviewFilter {
-  if (group) {
-    if (group.category === "late_review") {
-      return "late";
-    }
-    if (group.category === "absent_review") {
-      return "absent";
-    }
-    if (group.category === "missing_punch") {
-      return "irregular_punch";
-    }
-    if (["duplicate_punches", "multiple_entries"].includes(group.category)) {
-      return "duplicate_punches";
-    }
-    if (group.category === "invalid_duration") {
-      return "invalid_duration";
-    }
-  }
-
-  if (isEarlyLoginExplainRow(row)) {
-    return "early_login";
-  }
-  if (row.derived_flags.includes("late_entry")) {
-    return "late";
-  }
-  if (row.derived_flags.includes("early_logout")) {
-    return "early_logout";
-  }
-  if (row.derived_flags.includes("missing_out_time")) {
-    return "missing_out_time";
-  }
-  if (row.final_status_code === "irregular_review") {
-    return "pending_review";
-  }
-  if (row.comp_off_earned > 0) {
-    return "comp_off_earned";
-  }
-  if (row.comp_off_adjusted > 0 || row.late_deduction_adjusted > 0) {
-    return "comp_off_adjusted";
-  }
-  if (
-    row.derived_flags.includes("overnight_exit") ||
-    row.anomaly_flags.includes("overnight_punch")
-  ) {
-    return "overnight";
-  }
-  if (row.final_status_code === "half_day") {
-    return "half_day";
-  }
-  if (row.final_status_code === "absent") {
-    return "absent";
-  }
-  if (row.final_status_code === "paid_wo") {
-    return "paid_weekoff";
-  }
-  if (row.final_status_code === "unpaid_wo") {
-    return "unpaid_weekoff";
-  }
-  if (row.final_status_code === "paid_holiday") {
-    return "paid_holiday";
-  }
-  if (row.final_status_code === "unpaid_holiday") {
-    return "unpaid_holiday";
-  }
-
-  return "present";
-}
-
 function matchesReviewFilter(
   group: AttendanceExceptionGroup,
   reviewFilter: ReviewFilter
@@ -3687,27 +2711,7 @@ function matchesReviewFilter(
     return group.category === "late_review";
   }
 
-  if (
-    [
-      "present",
-      "half_day",
-      "early_login",
-      "early_logout",
-      "paid_weekoff",
-      "unpaid_weekoff",
-      "paid_holiday",
-      "unpaid_holiday",
-      "comp_off",
-      "comp_off_earned",
-      "comp_off_adjusted",
-      "comp_off_balance",
-      "gross_payable",
-      "late_deduction",
-      "final_payable",
-      "leave_adjusted",
-      "primary_total",
-    ].includes(reviewFilter)
-  ) {
+  if (["present", "half_day", "early_login", "early_logout", "paid_weekoff", "unpaid_weekoff", "paid_holiday", "comp_off"].includes(reviewFilter)) {
     return false;
   }
 
@@ -3757,7 +2761,7 @@ function matchesProcessedRowFilter(
     return row.derived_flags.includes("late_entry");
   }
   if (reviewFilter === "early_login") {
-    return isEarlyLoginExplainRow(row);
+    return row.derived_flags.includes("early_login");
   }
   if (reviewFilter === "early_logout") {
     return row.derived_flags.includes("early_logout");
@@ -3842,6 +2846,12 @@ function buildProcessedRowIssueSummary(row: AttendanceProcessedRow) {
   if (row.final_status_code === "irregular_review") {
     return "Pending HR review";
   }
+  if (row.comp_off_adjusted > 0 && row.comp_off_earned > 0) {
+    return "Comp off source used in payroll reconciliation";
+  }
+  if (row.comp_off_adjusted > 0) {
+    return "Comp off restored this payroll impact";
+  }
   if (row.comp_off_earned > 0) {
     return "Comp off candidate";
   }
@@ -3849,512 +2859,4 @@ function buildProcessedRowIssueSummary(row: AttendanceProcessedRow) {
     return row.derived_flags.map(formatFlag).join(", ");
   }
   return row.attendance_classification;
-}
-
-function metricCardLabel(metric: ExplainabilityMetric) {
-  const labels: Record<ExplainabilityMetric, string> = {
-    present: "Present",
-    absent: "Absent",
-    half_day: "Half Day",
-    late_flags: "Late Flags",
-    early_login: "Early Login",
-    early_logout: "Early Logout",
-    overnight: "Overnight",
-    irregular_punch: "Irregular Punch",
-    payable_sundays: "Payable Sundays",
-    unpaid_sundays: "Unpaid Sundays",
-    paid_holidays: "Paid Holidays",
-    unpaid_holidays: "Unpaid Holidays",
-    comp_off_earned: "Comp Off Earned",
-    comp_off_adjusted: "Comp Off Adjusted",
-    comp_off_balance: "Comp Off Balance",
-    pending_review: "Pending Review",
-    gross_payable: "Gross Payable",
-    final_payable: "Final Payable",
-    late_deduction: "Late Deductions",
-    leave_adjusted: "Leave Adjusted",
-  };
-  return labels[metric];
-}
-
-function metricToReviewFilter(metric: ExplainabilityMetric): ReviewFilter {
-  const mapping: Record<ExplainabilityMetric, ReviewFilter> = {
-    present: "present",
-    absent: "absent",
-    half_day: "half_day",
-    late_flags: "late",
-    early_login: "early_login",
-    early_logout: "early_logout",
-    overnight: "overnight",
-    irregular_punch: "irregular_punch",
-    payable_sundays: "paid_weekoff",
-    unpaid_sundays: "unpaid_weekoff",
-    paid_holidays: "paid_holiday",
-    unpaid_holidays: "unpaid_holiday",
-    comp_off_earned: "comp_off_earned",
-    comp_off_adjusted: "comp_off_adjusted",
-    comp_off_balance: "comp_off_balance",
-    pending_review: "pending_review",
-    gross_payable: "gross_payable",
-    final_payable: "final_payable",
-    late_deduction: "late_deduction",
-    leave_adjusted: "leave_adjusted",
-  };
-  return mapping[metric];
-}
-
-function filterRowsForMetric(metric: ExplainabilityMetric, rows: AttendanceProcessedRow[]) {
-  return rows.filter((row) => {
-    if (metric === "present") {
-      return isPresentExplainRow(row);
-    }
-    if (metric === "absent") {
-      return isAbsentExplainRow(row);
-    }
-    if (metric === "half_day") {
-      return isHalfDayExplainRow(row);
-    }
-    if (metric === "late_flags") {
-      return row.derived_flags.includes("late_entry");
-    }
-    if (metric === "early_login") {
-      return isEarlyLoginExplainRow(row);
-    }
-    if (metric === "early_logout") {
-      return row.derived_flags.includes("early_logout");
-    }
-    if (metric === "overnight") {
-      return row.derived_flags.includes("overnight_exit") || row.anomaly_flags.includes("overnight_punch");
-    }
-    if (metric === "irregular_punch") {
-      return isIrregularExplainRow(row);
-    }
-    if (metric === "payable_sundays") {
-      return isSundayExplainDate(row.date) && row.final_status_code !== "unpaid_wo";
-    }
-    if (metric === "unpaid_sundays") {
-      return isSundayExplainDate(row.date) && row.final_status_code === "unpaid_wo";
-    }
-    if (metric === "paid_holidays") {
-      return row.final_status_code === "paid_holiday";
-    }
-    if (metric === "unpaid_holidays") {
-      return row.final_status_code === "unpaid_holiday";
-    }
-    if (metric === "comp_off_earned") {
-      return row.comp_off_earned > 0;
-    }
-    if (metric === "comp_off_adjusted") {
-      return row.comp_off_adjusted > 0 || row.late_deduction_adjusted > 0;
-    }
-    if (metric === "comp_off_balance") {
-      return row.comp_off_earned > 0;
-    }
-    if (metric === "pending_review") {
-      return row.final_status_code === "irregular_review";
-    }
-    if (metric === "gross_payable") {
-      return row.payable_day_impact > 0;
-    }
-    if (metric === "leave_adjusted") {
-      return normalizeText(row.hr_override_status) === "leave adjusted";
-    }
-    if (metric === "final_payable") {
-      return row.payable_day_impact > 0 || row.comp_off_adjusted > 0 || row.late_deduction_adjusted > 0;
-    }
-    return row.derived_flags.includes("late_entry") || row.late_deduction_adjusted > 0;
-  });
-}
-
-function isPresentExplainRow(row: AttendanceProcessedRow) {
-  return row.final_status_code === "present" || row.final_status_code === "present_late";
-}
-
-function isAbsentExplainRow(row: AttendanceProcessedRow) {
-  return row.final_status_code === "absent";
-}
-
-function isHalfDayExplainRow(row: AttendanceProcessedRow) {
-  return row.final_status_code === "half_day";
-}
-
-function isIrregularExplainRow(row: AttendanceProcessedRow) {
-  return (
-    row.final_status_code === "irregular_review" ||
-    row.derived_flags.includes("missing_in_time") ||
-    row.derived_flags.includes("missing_out_time")
-  );
-}
-
-function isSundayExplainDate(dateValue: string) {
-  if (!dateValue) {
-    return false;
-  }
-  return new Date(`${dateValue}T00:00:00`).getDay() === 0;
-}
-
-function sumEmployeeMetric(
-  items: AttendanceEmployeeMonthlySummaryItem[],
-  field:
-    | "comp_off_earned_count"
-    | "comp_off_adjusted_days"
-    | "comp_off_balance"
-    | "gross_payable_days"
-    | "late_penalty_after_comp_off"
-    | "payable_days"
-) {
-  return roundMetric(items.reduce((sum, item) => sum + Number(item[field] ?? 0), 0));
-}
-
-function roundMetric(value: number) {
-  return Math.round(value * 100) / 100;
-}
-
-function formatMetricValue(value: number) {
-  const rounded = roundMetric(value);
-  return rounded.toFixed(Number.isInteger(rounded) ? 0 : 2);
-}
-
-function formatShortDate(dateValue: string) {
-  if (!dateValue) {
-    return "Not linked";
-  }
-  const date = new Date(`${dateValue}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return dateValue;
-  }
-  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short" }).format(date);
-}
-
-function formatMonthLabel(monthValue: string) {
-  if (!monthValue) {
-    return "Month not available";
-  }
-  const date = new Date(`${monthValue}-01T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return monthValue;
-  }
-  return new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(date);
-}
-
-function policyRuleValue(policyRules: AttendancePolicyRule[], ruleId: string, fallback: string) {
-  return policyRules.find((rule) => rule.rule_id === ruleId && rule.enabled)?.value || fallback;
-}
-
-function buildMetricRuleExplanation(
-  metric: ExplainabilityMetric,
-  policyRules: AttendancePolicyRule[],
-  monthlySummaries: AttendanceEmployeeMonthlySummaryItem[]
-) {
-  const lateAfter = policyRuleValue(policyRules, "late_after_time", "10:11");
-  const halfDayAfter = policyRuleValue(policyRules, "half_day_after_time", "12:00");
-  const minimumPresentHours = policyRuleValue(policyRules, "minimum_present_hours_threshold", "5.00");
-  const nonWorkingDayHours = policyRuleValue(policyRules, "non_working_day_full_present_hours_threshold", "5.00");
-  const totalLateDeductions = formatMetricValue(sumEmployeeMetric(monthlySummaries, "late_penalty_after_comp_off"));
-
-  const explanations: Record<ExplainabilityMetric, { title: string; condition: string; result: string; payrollImpact: string }> = {
-    present: {
-      title: "Present Rule",
-      condition: `Working hours must reach at least ${minimumPresentHours}. If in time is at/after ${halfDayAfter}, the day becomes Half Day instead.`,
-      result: "Rows shown here are currently treated as fully payable attendance days.",
-      payrollImpact: "Payroll Impact: +1 payable day for each present record.",
-    },
-    absent: {
-      title: "Absent Rule",
-      condition: "Both punches missing, unresolved attendance, or working hours below the absent threshold can lead to an absent result.",
-      result: "Rows shown here ended as absent after classification or HR override.",
-      payrollImpact: "Payroll Impact: 0 payable day for each absent record.",
-    },
-    half_day: {
-      title: "Half Day Rule",
-      condition: `Working hours between 3.00 and below ${minimumPresentHours}, or an in time at/after ${halfDayAfter}, produce a Half Day.`,
-      result: "Rows shown here were classified as Half Day.",
-      payrollImpact: "Payroll Impact: +0.5 payable day for each half-day record.",
-    },
-    late_flags: {
-      title: "Late Entry Rule",
-      condition: `In time after ${lateAfter} triggers a late flag.`,
-      result: "Late flags do not change attendance into absent, but they are counted for deduction.",
-      payrollImpact: "Payroll Impact: every 3 late flags = 1 deduction day.",
-    },
-    early_login: {
-      title: "Early Login Rule",
-      condition: "In time before 10:00 AM triggers an early login flag.",
-      result: "This flag is informational only and helps HR understand reporting discipline on the positive side.",
-      payrollImpact: "Payroll Impact: none. Early login does not change payable days or deductions.",
-    },
-    early_logout: {
-      title: "Early Logout Rule",
-      condition: "Employees who exit before the expected full-shift hours receive an early logout flag when payroll still considers the day payable.",
-      result: "Rows shown here are marked for HR visibility because the employee left early compared with the configured full-shift threshold.",
-      payrollImpact: "Payroll Impact: informational only unless another attendance rule changes the day result.",
-    },
-    overnight: {
-      title: "Overnight / Timing Exception Rule",
-      condition: "Rows appear here when the attendance engine detected overnight punch behavior or a timing pattern that needs HR attention.",
-      result: "These records are shown so HR can audit unusual timing before relying on the payroll-ready working.",
-      payrollImpact: "Payroll Impact: depends on the final classified result and any HR review action.",
-    },
-    irregular_punch: {
-      title: "Irregular Punch Rule",
-      condition: "Missing punches or unresolved timing issues stay in review until HR regularizes them.",
-      result: "Rows shown here are irregular punch or pending review records.",
-      payrollImpact: "Payroll Impact: no final payroll credit is granted until the row is resolved.",
-    },
-    payable_sundays: {
-      title: "Payable Sunday Rule",
-      condition: `A Sunday or weekly off becomes payable when the weekly eligibility rule is satisfied. Worked Sundays with at least ${nonWorkingDayHours} hours are treated as full payable attendance.`,
-      result: "Rows shown here are the Sundays currently contributing payable value.",
-      payrollImpact: "Payroll Impact: these records add payable days and may also earn comp off.",
-    },
-    unpaid_sundays: {
-      title: "Unpaid Sunday Rule",
-      condition: "A Sunday without weekly eligibility remains unpaid.",
-      result: "Rows shown here are Sundays that stayed unpaid.",
-      payrollImpact: "Payroll Impact: 0 payable day for each unpaid Sunday.",
-    },
-    paid_holidays: {
-      title: "Paid Holiday Rule",
-      condition: "Marked or classified holidays remain payroll-payable when the holiday treatment is approved as paid.",
-      result: "Rows shown here are holiday records that currently contribute full payable value.",
-      payrollImpact: "Payroll Impact: +1 payable day for each paid holiday record.",
-    },
-    unpaid_holidays: {
-      title: "Unpaid Holiday Rule",
-      condition: "Holiday records stay unpaid when the holiday eligibility or override does not grant a paid holiday outcome.",
-      result: "Rows shown here are holiday records that do not contribute payable value.",
-      payrollImpact: "Payroll Impact: 0 payable day for each unpaid holiday record.",
-    },
-    comp_off_earned: {
-      title: "Comp Off Earned Rule",
-      condition: `Employee worked on Sunday or holiday. Full comp off credit is typically earned when working hours meet the ${nonWorkingDayHours} hour threshold.`,
-      result: "Rows shown here earned comp off credit in monthly reconciliation.",
-      payrollImpact: "Payroll Impact: adds comp off credit available for future adjustment.",
-    },
-    comp_off_adjusted: {
-      title: "Comp Off Adjustment Rule",
-      condition: "Available comp off credits are first applied against absent days and then against late deductions.",
-      result: "The mapping below shows exactly which comp off credit was used and what it offset.",
-      payrollImpact: "Payroll Impact: raises final payable by restoring absent days or reducing late deductions.",
-    },
-    comp_off_balance: {
-      title: "Comp Off Balance Rule",
-      condition: "Any earned comp off that is not consumed in the month stays as balance or carry-forward.",
-      result: "The ledger below shows which credits are still unused.",
-      payrollImpact: "Payroll Impact: no immediate change until the balance is consumed against a deduction.",
-    },
-    pending_review: {
-      title: "Pending Review Rule",
-      condition: "Rows stay pending when the attendance engine needs HR review before final payroll treatment.",
-      result: "These records still need an HR decision.",
-      payrollImpact: "Payroll Impact: payroll remains conservative until the exception is resolved.",
-    },
-    gross_payable: {
-      title: "Gross Payable Rule",
-      condition: "Gross payable is the sum of daily payable impacts before late deductions are applied.",
-      result: "This includes present days, half days, paid Sundays, paid holidays, and other fully payable overrides.",
-      payrollImpact: "Payroll Impact: starting point for final payable calculation.",
-    },
-    final_payable: {
-      title: "Final Payable Rule",
-      condition: "Final payable uses gross payable, adds comp off restored against absences, and then subtracts late deductions remaining after comp off.",
-      result: "This is the final day-value sent forward for payroll interpretation.",
-      payrollImpact: "Payroll Impact: final payable is the payroll-ready day count.",
-    },
-    late_deduction: {
-      title: "Late Deduction Rule",
-      condition: `Late cutoff is ${lateAfter}. Every 3 late flags become 1 deduction day, and comp off can offset part of that deduction.`,
-      result: "The dates below are the source late flags currently contributing to deduction.",
-      payrollImpact: `Payroll Impact: -${totalLateDeductions} day(s) in the current view after comp off offsets.`,
-    },
-    leave_adjusted: {
-      title: "Leave Adjustment Rule",
-      condition: "HR can convert a day into Leave Adjusted using the existing review workflow.",
-      result: "Rows shown here were regularized through leave adjustment and remain visible for payroll audit.",
-      payrollImpact: "Payroll Impact: the row contributes its adjusted payable value to final payroll.",
-    },
-  };
-  return explanations[metric];
-}
-
-function aggregateLateDeductionExplanation(monthlySummaries: AttendanceEmployeeMonthlySummaryItem[]) {
-  if (monthlySummaries.length === 0) {
-    return null;
-  }
-  const lateSourceDates = monthlySummaries.flatMap((item) => item.explainability?.late_deduction.late_source_dates ?? []);
-  const lateSourceRecordIds = monthlySummaries.flatMap((item) => item.explainability?.late_deduction.late_source_record_ids ?? []);
-  const totalLateFlags = monthlySummaries.reduce((sum, item) => sum + (item.explainability?.late_deduction.total_late_flags ?? item.late_entry_count), 0);
-  const deductionsBeforeCompOff = monthlySummaries.reduce((sum, item) => sum + (item.explainability?.late_deduction.deductions_before_comp_off ?? item.late_penalty_deductions), 0);
-  const compOffAdjustedAgainstLateDays = monthlySummaries.reduce((sum, item) => sum + (item.explainability?.late_deduction.comp_off_adjusted_against_late_days ?? item.comp_off_adjusted_against_late_days), 0);
-  const deductionsAfterCompOff = monthlySummaries.reduce((sum, item) => sum + (item.explainability?.late_deduction.deductions_after_comp_off ?? item.late_penalty_after_comp_off), 0);
-  return {
-    late_rule_label: "3 Late Flags = 1 Deduction",
-    late_cutoff_time: monthlySummaries[0]?.explainability?.late_deduction.late_cutoff_time ?? "10:11 AM",
-    total_late_flags: totalLateFlags,
-    late_source_dates: lateSourceDates,
-    late_source_record_ids: lateSourceRecordIds,
-    deductions_before_comp_off: roundMetric(deductionsBeforeCompOff),
-    comp_off_adjusted_against_late_days: roundMetric(compOffAdjustedAgainstLateDays),
-    deductions_after_comp_off: roundMetric(deductionsAfterCompOff),
-    formula_text: `${totalLateFlags} late flags ÷ 3 = ${formatMetricValue(deductionsBeforeCompOff)} deductions`,
-  };
-}
-
-function buildLateDeductionGroups(lateSourceDates: string[]) {
-  const groups: Array<{ dates: string[]; qualifies: boolean }> = [];
-  for (let index = 0; index < lateSourceDates.length; index += 3) {
-    const dates = lateSourceDates.slice(index, index + 3).map((date) => formatShortDate(date));
-    groups.push({
-      dates,
-      qualifies: dates.length === 3,
-    });
-  }
-  return groups;
-}
-
-function describeCompOffDayType(dateValue: string) {
-  if (!dateValue) {
-    return "Carry Forward";
-  }
-  return isSundayExplainDate(dateValue) ? "Sunday" : "Holiday / Weekly Off";
-}
-
-function humanizePayrollImpact(value: string) {
-  const normalized = (value || "").trim().toLowerCase();
-  if (!normalized) {
-    return "Payroll effect recorded in monthly reconciliation.";
-  }
-  if (normalized.includes("final payable increased")) {
-    return "+1 Payable Day";
-  }
-  if (normalized.includes("late deduction reduced")) {
-    return "+1 Payable Day (late deduction offset)";
-  }
-  return value;
-}
-
-function hasTraceableCompOffTarget(trailItem: {
-  source_record_id?: string;
-  source_date?: string;
-  adjusted_record_id?: string;
-  adjusted_date?: string;
-}) {
-  const adjustedRecordId = (trailItem.adjusted_record_id || "").trim();
-  const adjustedDate = (trailItem.adjusted_date || "").trim();
-  if (!adjustedRecordId || !adjustedDate) {
-    return false;
-  }
-  return !(
-    adjustedRecordId === (trailItem.source_record_id || "").trim() &&
-    adjustedDate === (trailItem.source_date || "").trim()
-  );
-}
-
-function describeCompOffAdjustedAgainst(
-  trailItem: {
-    source_record_id?: string;
-    source_date?: string;
-    adjusted_record_id?: string;
-    adjusted_date?: string;
-    adjustment_reason?: string;
-  }
-) {
-  if (!hasTraceableCompOffTarget(trailItem)) {
-    return "Not available from current calculation data";
-  }
-
-  return `${formatShortDate(trailItem.adjusted_date || "")} • ${trailItem.adjustment_reason || "Payroll offset"}`;
-}
-
-function describeCompOffAdjustedAgainstExplanation(
-  trailItem: {
-    source_record_id?: string;
-    source_date?: string;
-    adjusted_record_id?: string;
-    adjusted_date?: string;
-    adjustment_reason?: string;
-  }
-) {
-  if (!hasTraceableCompOffTarget(trailItem)) {
-    return "The payroll engine applied comp off adjustment, but the exact offset date is not exposed in the current calculation data.";
-  }
-
-  return `Adjusted Against: ${formatShortDate(trailItem.adjusted_date || "")} • Reason: ${trailItem.adjustment_reason || "Payroll offset"}`;
-}
-
-function buildFinalPayableStory(
-  monthlySummaries: AttendanceEmployeeMonthlySummaryItem[],
-  rows: AttendanceProcessedRow[]
-) {
-  const presentDays = monthlySummaries.reduce((sum, item) => sum + item.present_count, 0);
-  const halfDays = monthlySummaries.reduce((sum, item) => sum + item.half_day_count, 0);
-  const absentDays = monthlySummaries.reduce((sum, item) => sum + item.absent_count, 0);
-  const monthDays = monthlySummaries.reduce((sum, item) => {
-    const calendarDays = item.explainability?.calculation_breakdown.calendar_days ?? 0;
-    return sum + calendarDays;
-  }, 0);
-  const lateDeduction = monthlySummaries.reduce((sum, item) => {
-    const deduction =
-      item.explainability?.late_deduction.deductions_before_comp_off ??
-      item.late_penalty_deductions;
-    return sum + deduction;
-  }, 0);
-  const compOffAdded = monthlySummaries.reduce((sum, item) => {
-    const absentOffset =
-      item.explainability?.calculation_breakdown.comp_off_adjusted_against_absent_days ??
-      item.comp_off_adjusted_against_absent_days;
-    const lateOffset =
-      item.explainability?.calculation_breakdown.comp_off_adjusted_against_late_days ??
-      item.comp_off_adjusted_against_late_days;
-    return sum + absentOffset + lateOffset;
-  }, 0);
-  const leaveAdjustedValue = rows
-    .filter((row) => normalizeText(row.hr_override_status) === "leave adjusted")
-    .reduce((sum, row) => sum + row.payable_day_impact, 0);
-  const finalPayable = monthlySummaries.reduce((sum, item) => sum + item.payable_days, 0);
-
-  return {
-    monthDays: roundMetric(monthDays),
-    presentDays,
-    presentValue: roundMetric(presentDays * 1),
-    halfDays,
-    halfValue: roundMetric(halfDays * 0.5),
-    absentDays,
-    compOffAdded: roundMetric(compOffAdded),
-    lateDeduction: roundMetric(lateDeduction),
-    leaveAdjustedValue: roundMetric(leaveAdjustedValue),
-    finalPayable: roundMetric(finalPayable),
-  };
-}
-
-function buildRowTriggerCondition(row: AttendanceProcessedRow, policyRules: AttendancePolicyRule[]) {
-  const lateAfter = policyRuleValue(policyRules, "late_after_time", "10:11");
-  const halfDayAfter = policyRuleValue(policyRules, "half_day_after_time", "12:00");
-  const minimumPresentHours = policyRuleValue(policyRules, "minimum_present_hours_threshold", "5.00");
-  const fullShiftHours = policyRuleValue(
-    policyRules,
-    row.gender?.trim().toLowerCase() === "female" ? "female_full_shift_hours_threshold" : "full_shift_hours_threshold",
-    row.gender?.trim().toLowerCase() === "female" ? "9.00" : "10.00"
-  );
-  return [
-    `In Time: ${row.in_time || "Missing"}`,
-    `Out Time: ${row.out_time || "Missing"}`,
-    `Working Hours: ${row.working_hours || "Not computed"}`,
-    `Late cutoff: ${lateAfter}`,
-    `Half-day after: ${halfDayAfter}`,
-    `Minimum present hours: ${minimumPresentHours}`,
-    `Expected full-shift hours: ${fullShiftHours}`,
-  ].join(" • ");
-}
-
-function describeThresholdsForRow(row: AttendanceProcessedRow, policyRules: AttendancePolicyRule[]) {
-  const lateAfter = policyRuleValue(policyRules, "late_after_time", "10:11");
-  const halfDayAfter = policyRuleValue(policyRules, "half_day_after_time", "12:00");
-  const minimumPresentHours = policyRuleValue(policyRules, "minimum_present_hours_threshold", "5.00");
-  const fullShiftHours = policyRuleValue(
-    policyRules,
-    row.gender?.trim().toLowerCase() === "female" ? "female_full_shift_hours_threshold" : "full_shift_hours_threshold",
-    row.gender?.trim().toLowerCase() === "female" ? "9.00" : "10.00"
-  );
-  return `Late after ${lateAfter}, half day after ${halfDayAfter}, minimum present hours ${minimumPresentHours}, and expected full-shift hours ${fullShiftHours} for the current gender profile.`;
 }

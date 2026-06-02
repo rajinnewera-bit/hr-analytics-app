@@ -114,42 +114,6 @@ const emptyAttendanceValidationSummary: AttendanceValidationSummary = {
   processed_attendance_rows: []
 };
 
-const emptyMonthlyExplainability = {
-  month: "",
-  calendar_days: 0,
-  comp_off_ledger: [],
-  comp_off_usage_trail: [],
-  late_deduction: {
-    late_rule_label: "3 Late Flags = 1 Deduction",
-    late_cutoff_time: "10:11 AM",
-    total_late_flags: 0,
-    late_source_dates: [],
-    late_source_record_ids: [],
-    deductions_before_comp_off: 0,
-    comp_off_adjusted_against_late_days: 0,
-    deductions_after_comp_off: 0,
-    formula_text: "0 late flags ÷ 3 = 0 deductions"
-  },
-  calculation_breakdown: {
-    calendar_days: 0,
-    present_days: 0,
-    half_days: 0,
-    absent_days: 0,
-    paid_week_off_days: 0,
-    unpaid_week_off_days: 0,
-    paid_holiday_days: 0,
-    unpaid_holiday_days: 0,
-    pending_review_days: 0,
-    half_day_deduction_days: 0,
-    gross_payable_days: 0,
-    late_penalty_before_comp_off: 0,
-    late_penalty_after_comp_off: 0,
-    comp_off_adjusted_against_absent_days: 0,
-    comp_off_adjusted_against_late_days: 0,
-    final_payable_days: 0
-  }
-};
-
 function safeArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
@@ -415,122 +379,23 @@ export function normalizeAttendanceValidationSummary(
       comp_off_carry_forward_days: item?.comp_off_carry_forward_days ?? 0,
       explainability: item?.explainability
         ? {
-            month: safeString(item.explainability.month, safeString(item?.month)),
-            calendar_days:
-              item.explainability.calendar_days ??
-              item.explainability.calculation_breakdown?.calendar_days ??
-              0,
-            comp_off_ledger: safeArray(item.explainability.comp_off_ledger).map((ledgerItem) => ({
-              source_kind: safeString(ledgerItem?.source_kind, "attendance_day"),
-              source_record_id: safeString(ledgerItem?.source_record_id),
-              source_date: safeString(ledgerItem?.source_date),
-              source_day_label: safeString(ledgerItem?.source_day_label),
-              source_attendance_result: safeString(ledgerItem?.source_attendance_result),
-              source_working_hours: safeString(ledgerItem?.source_working_hours),
-              source_reason: safeString(ledgerItem?.source_reason),
-              earned_value: safeNumber(ledgerItem?.earned_value),
-              used_value: safeNumber(ledgerItem?.used_value),
-              balance_value: safeNumber(ledgerItem?.balance_value)
-            })),
-            comp_off_usage_trail: safeArray(item.explainability.comp_off_usage_trail).map((trailItem) => ({
-              source_kind: safeString(trailItem?.source_kind, "attendance_day"),
-              source_record_id: safeString(trailItem?.source_record_id),
-              source_date: safeString(trailItem?.source_date),
-              source_day_label: safeString(trailItem?.source_day_label),
-              source_attendance_result: safeString(trailItem?.source_attendance_result),
-              source_working_hours: safeString(trailItem?.source_working_hours),
-              source_reason: safeString(trailItem?.source_reason),
-              earned_value: safeNumber(trailItem?.earned_value),
-              adjusted_record_id: safeString(trailItem?.adjusted_record_id),
-              adjusted_date: safeString(trailItem?.adjusted_date),
-              adjusted_day_label: safeString(trailItem?.adjusted_day_label),
-              adjusted_attendance_result: safeString(trailItem?.adjusted_attendance_result),
-              adjusted_working_hours: safeString(trailItem?.adjusted_working_hours),
-              adjustment_value: safeNumber(trailItem?.adjustment_value),
-              adjustment_kind: safeString(trailItem?.adjustment_kind),
-              adjustment_reason: safeString(trailItem?.adjustment_reason),
-              payroll_impact: safeString(trailItem?.payroll_impact)
-            })),
-            late_deduction: {
-              late_rule_label: safeString(
-                item.explainability.late_deduction?.late_rule_label,
-                emptyMonthlyExplainability.late_deduction.late_rule_label
-              ),
-              late_cutoff_time: safeString(
-                item.explainability.late_deduction?.late_cutoff_time,
-                emptyMonthlyExplainability.late_deduction.late_cutoff_time
-              ),
-              total_late_flags: safeNumber(
-                item.explainability.late_deduction?.total_late_flags
-              ),
-              late_source_dates: safeStringArray(
-                item.explainability.late_deduction?.late_source_dates
-              ),
-              late_source_record_ids: safeStringArray(
-                item.explainability.late_deduction?.late_source_record_ids
-              ),
-              deductions_before_comp_off: safeNumber(
-                item.explainability.late_deduction?.deductions_before_comp_off
-              ),
-              comp_off_adjusted_against_late_days: safeNumber(
-                item.explainability.late_deduction?.comp_off_adjusted_against_late_days
-              ),
-              deductions_after_comp_off: safeNumber(
-                item.explainability.late_deduction?.deductions_after_comp_off
-              ),
-              formula_text: safeString(
-                item.explainability.late_deduction?.formula_text,
-                emptyMonthlyExplainability.late_deduction.formula_text
-              )
-            },
-            calculation_breakdown: {
-              calendar_days: safeNumber(
-                item.explainability.calculation_breakdown?.calendar_days
-              ),
-              present_days: safeNumber(
-                item.explainability.calculation_breakdown?.present_days
-              ),
-              half_days: safeNumber(item.explainability.calculation_breakdown?.half_days),
-              absent_days: safeNumber(
-                item.explainability.calculation_breakdown?.absent_days
-              ),
-              paid_week_off_days: safeNumber(
-                item.explainability.calculation_breakdown?.paid_week_off_days
-              ),
-              unpaid_week_off_days: safeNumber(
-                item.explainability.calculation_breakdown?.unpaid_week_off_days
-              ),
-              paid_holiday_days: safeNumber(
-                item.explainability.calculation_breakdown?.paid_holiday_days
-              ),
-              unpaid_holiday_days: safeNumber(
-                item.explainability.calculation_breakdown?.unpaid_holiday_days
-              ),
-              pending_review_days: safeNumber(
-                item.explainability.calculation_breakdown?.pending_review_days
-              ),
-              half_day_deduction_days: safeNumber(
-                item.explainability.calculation_breakdown?.half_day_deduction_days
-              ),
-              gross_payable_days: safeNumber(
-                item.explainability.calculation_breakdown?.gross_payable_days
-              ),
-              late_penalty_before_comp_off: safeNumber(
-                item.explainability.calculation_breakdown?.late_penalty_before_comp_off
-              ),
-              late_penalty_after_comp_off: safeNumber(
-                item.explainability.calculation_breakdown?.late_penalty_after_comp_off
-              ),
-              comp_off_adjusted_against_absent_days: safeNumber(
-                item.explainability.calculation_breakdown?.comp_off_adjusted_against_absent_days
-              ),
-              comp_off_adjusted_against_late_days: safeNumber(
-                item.explainability.calculation_breakdown?.comp_off_adjusted_against_late_days
-              ),
-              final_payable_days: safeNumber(
-                item.explainability.calculation_breakdown?.final_payable_days
-              )
-            }
+            comp_off_usage_trail: safeArray(item.explainability?.comp_off_usage_trail).map(
+              (trailItem) => ({
+                source_record_id: safeString(trailItem?.source_record_id),
+                source_date: safeString(trailItem?.source_date),
+                source_day: safeString(trailItem?.source_day),
+                source_working_hours: safeString(trailItem?.source_working_hours),
+                earned_value: trailItem?.earned_value ?? 0,
+                used_value: trailItem?.used_value ?? 0,
+                adjusted_against_record_id: safeString(trailItem?.adjusted_against_record_id),
+                adjusted_against_date: safeString(trailItem?.adjusted_against_date),
+                adjusted_against_day: safeString(trailItem?.adjusted_against_day),
+                adjusted_against_type: safeString(trailItem?.adjusted_against_type),
+                adjusted_against_reason: safeString(trailItem?.adjusted_against_reason),
+                reference_dates: safeStringArray(trailItem?.reference_dates),
+                payroll_effect: safeString(trailItem?.payroll_effect)
+              })
+            )
           }
         : null
     })),
@@ -540,7 +405,7 @@ export function normalizeAttendanceValidationSummary(
       pending_review_count: item?.pending_review_count ?? 0,
       comp_off_earned_count: item?.comp_off_earned_count ?? 0,
       comp_off_adjusted_days: item?.comp_off_adjusted_days ?? 0,
-      early_login_count: item?.early_login_count ?? 0,
+      early_login_count: item?.early_login_count ?? 0
     })),
     processed_attendance_rows: safeArray(
       attendanceValidationSummary.processed_attendance_rows

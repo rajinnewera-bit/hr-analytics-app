@@ -1,11 +1,6 @@
 import type {
-  AttendanceCalculationBreakdown,
-  AttendanceCompOffLedgerItem,
-  AttendanceCompOffUsageTrailItem,
-  AttendanceEmployeeMonthlyExplainability,
   AttendanceEmployeeMonthlySummaryItem,
   AttendanceExceptionGroup,
-  AttendanceLateDeductionExplanation,
   AttendanceProcessedRow,
   AttendanceStatusSummary,
   AttendanceUnitSummaryItem,
@@ -115,7 +110,7 @@ export function deriveStatusSummary(rows: AttendanceProcessedRow[]): AttendanceS
     if (row.derived_flags.includes("late_entry")) {
       summary.late_entry_count += 1;
     }
-    if (hasEarlyLoginFlag(row)) {
+    if (row.derived_flags.includes("early_login")) {
       summary.early_login_count += 1;
     }
     if (row.derived_flags.includes("early_logout")) {
@@ -150,6 +145,12 @@ export function deriveEmployeeMonthlySummary(
   return Array.from(grouped.entries())
     .map(([key, groupRows]) => {
       const [employeeKey, month] = key.split("__");
+      const fallbackSummary = safeFallback.find(
+        (item) =>
+          item.month === month &&
+          (item.employee_id || item.employee_name) ===
+            (groupRows[0]?.employee_code || groupRows[0]?.employee_name || employeeKey)
+      );
       const statusSummary = deriveStatusSummary(groupRows);
       const firstRow = groupRows[0];
       const grossPayableDays = roundNumber(
@@ -175,27 +176,6 @@ export function deriveEmployeeMonthlySummary(
           groupRows.reduce((sum, row) => sum + row.comp_off_earned, 0) - compOffAdjustedDays,
           0
         )
-      );
-      const explainability = deriveEmployeeMonthlyExplainability(
-        firstRow.employee_code || employeeKey,
-        month,
-        groupRows,
-        {
-          present_count: statusSummary.present_count,
-          absent_count: statusSummary.absent_count,
-          half_day_count: statusSummary.half_day_count,
-          paid_week_off_count: statusSummary.paid_week_off_count,
-          unpaid_week_off_count: statusSummary.unpaid_week_off_count,
-          paid_holiday_count: statusSummary.paid_holiday_count,
-          unpaid_holiday_count: statusSummary.unpaid_holiday_count,
-          pending_review_count: statusSummary.pending_review_count,
-          gross_payable_days: grossPayableDays,
-          late_penalty_deductions: latePenaltyDeductions,
-          late_penalty_after_comp_off: latePenaltyAfterCompOff,
-          comp_off_adjusted_against_absent_days: compOffAdjustedAgainstAbsentDays,
-          comp_off_adjusted_against_late_days: compOffAdjustedAgainstLateDays,
-          payable_days: calculateFinalPayableDays(groupRows),
-        }
       );
       return {
         employee_name: firstRow.employee_name,
@@ -226,7 +206,7 @@ export function deriveEmployeeMonthlySummary(
         comp_off_balance_days: compOffBalance,
         comp_off_carry_forward_days: 0,
         payable_days: calculateFinalPayableDays(groupRows),
-        explainability,
+        explainability: fallbackSummary?.explainability ?? null
       };
     })
     .sort((left, right) =>
@@ -475,7 +455,9 @@ export function deriveEmployeeRegister(
       const lateFlags = groupRows.filter((row) =>
         row.derived_flags.includes("late_entry")
       ).length;
-      const earlyLoginFlags = groupRows.filter((row) => hasEarlyLoginFlag(row)).length;
+      const earlyLoginFlags = groupRows.filter((row) =>
+        row.derived_flags.includes("early_login")
+      ).length;
       const irregularPunchFlags = groupRows.filter((row) =>
         row.final_status_code === "irregular_review"
       ).length;
@@ -661,284 +643,6 @@ function formatDayLabelForExport(dateValue: string) {
   return new Intl.DateTimeFormat("en-IN", { weekday: "short" }).format(date);
 }
 
-function deriveEmployeeMonthlyExplainability(
-  employeeId: string,
-  month: string,
-  rows: AttendanceProcessedRow[],
-  metrics: {
-    present_count: number;
-    absent_count: number;
-    half_day_count: number;
-    paid_week_off_count: number;
-    unpaid_week_off_count: number;
-    paid_holiday_count: number;
-    unpaid_holiday_count: number;
-    pending_review_count: number;
-    gross_payable_days: number;
-    late_penalty_deductions: number;
-    late_penalty_after_comp_off: number;
-    comp_off_adjusted_against_absent_days: number;
-    comp_off_adjusted_against_late_days: number;
-    payable_days: number;
-  }
-): AttendanceEmployeeMonthlyExplainability {
-  const sortedRows = [...rows].sort((left, right) =>
-    `${left.date}-${left.record_id}`.localeCompare(`${right.date}-${right.record_id}`)
-  );
-  const lateRows = sortedRows.filter((row) => row.derived_flags.includes("late_entry"));
-  const lateDeduction: AttendanceLateDeductionExplanation = {
-    late_rule_label: "3 Late Flags = 1 Deduction",
-    late_cutoff_time: "10:11",
-    total_late_flags: lateRows.length,
-    late_source_dates: lateRows.map((row) => row.date),
-    late_source_record_ids: lateRows.map((row) => row.record_id),
-    deductions_before_comp_off: roundNumber(metrics.late_penalty_deductions),
-    comp_off_adjusted_against_late_days: roundNumber(
-      metrics.comp_off_adjusted_against_late_days
-    ),
-    deductions_after_comp_off: roundNumber(metrics.late_penalty_after_comp_off),
-    formula_text: `${lateRows.length} late flags ÷ 3 = ${formatMetricNumber(
-      metrics.late_penalty_deductions
-    )} deductions`,
-  };
-
-  const compOffSourceRows = sortedRows.filter((row) => row.comp_off_earned > 0);
-  const openingBalanceUsed = roundNumber(
-    Math.max(
-      metrics.comp_off_adjusted_against_absent_days +
-        metrics.comp_off_adjusted_against_late_days -
-        compOffSourceRows.reduce((sum, row) => sum + row.comp_off_earned, 0),
-      0
-    )
-  );
-
-  const sourceBalances: Array<{
-    source_kind: string;
-    source_record_id: string;
-    source_date: string;
-    source_day_label: string;
-    source_attendance_result: string;
-    source_working_hours: string;
-    source_reason: string;
-    earned_value: number;
-    remaining_value: number;
-  }> = [];
-
-  if (openingBalanceUsed > 0) {
-    sourceBalances.push({
-      source_kind: "opening_balance",
-      source_record_id: `opening-balance-${employeeId}-${month}`,
-      source_date: "",
-      source_day_label: "",
-      source_attendance_result: "Opening Balance",
-      source_working_hours: "",
-      source_reason: "Comp off balance carried into this month.",
-      earned_value: openingBalanceUsed,
-      remaining_value: openingBalanceUsed,
-    });
-  }
-
-  compOffSourceRows.forEach((row) => {
-    sourceBalances.push({
-      source_kind: "worked_non_working_day",
-      source_record_id: row.record_id,
-      source_date: row.date,
-      source_day_label: row.day_label,
-      source_attendance_result: row.attendance_classification,
-      source_working_hours: row.working_hours,
-      source_reason:
-        row.rule_explanation ||
-        "Employee worked on Sunday or holiday and became eligible for comp off.",
-      earned_value: roundNumber(row.comp_off_earned),
-      remaining_value: roundNumber(row.comp_off_earned),
-    });
-  });
-
-  const compOffUsageTrail: AttendanceCompOffUsageTrailItem[] = [];
-  const absentTargets = sortedRows
-    .filter(
-      (row) =>
-        row.comp_off_adjusted > 0 &&
-        row.comp_off_earned <= 0 &&
-        row.final_status_code === "absent"
-    )
-    .map((row) => ({
-      row,
-      adjustment_value: roundNumber(row.comp_off_adjusted),
-      adjustment_kind: "absent_offset",
-      adjustment_reason: "Absent Day Offset",
-      payroll_impact: "Final payable increased by 1.0 day",
-    }));
-  const lateTargets = sortedRows
-    .filter((row) => row.late_deduction_adjusted > 0)
-    .map((row) => ({
-      row,
-      adjustment_value: roundNumber(row.late_deduction_adjusted),
-      adjustment_kind: "late_offset",
-      adjustment_reason: "Late Deduction Offset",
-      payroll_impact: "Late deduction reduced by 1.0 day",
-    }));
-
-  [...absentTargets, ...lateTargets].forEach((target) => {
-    let remaining = target.adjustment_value;
-    for (const sourceBalance of sourceBalances) {
-      if (remaining <= 0) {
-        break;
-      }
-      if (sourceBalance.remaining_value <= 0) {
-        continue;
-      }
-      const allocation = roundNumber(
-        Math.min(sourceBalance.remaining_value, remaining)
-      );
-      sourceBalance.remaining_value = roundNumber(
-        sourceBalance.remaining_value - allocation
-      );
-      remaining = roundNumber(remaining - allocation);
-      compOffUsageTrail.push({
-        source_kind: sourceBalance.source_kind,
-        source_record_id: sourceBalance.source_record_id,
-        source_date: sourceBalance.source_date,
-        source_day_label: sourceBalance.source_day_label,
-        source_attendance_result: sourceBalance.source_attendance_result,
-        source_working_hours: sourceBalance.source_working_hours,
-        source_reason: sourceBalance.source_reason,
-        earned_value: sourceBalance.earned_value,
-        adjusted_record_id: target.row.record_id,
-        adjusted_date: target.row.date,
-        adjusted_day_label: target.row.day_label,
-        adjusted_attendance_result: target.row.attendance_classification,
-        adjusted_working_hours: target.row.working_hours,
-        adjustment_value: allocation,
-        adjustment_kind: target.adjustment_kind,
-        adjustment_reason: target.adjustment_reason,
-        payroll_impact: target.payroll_impact,
-      });
-    }
-  });
-
-  const exactAbsentAllocation = roundNumber(
-    absentTargets.reduce((sum, target) => sum + target.adjustment_value, 0)
-  );
-  const exactLateAllocation = roundNumber(
-    lateTargets.reduce((sum, target) => sum + target.adjustment_value, 0)
-  );
-  const unresolvedAbsentAllocation = roundNumber(
-    Math.max(metrics.comp_off_adjusted_against_absent_days - exactAbsentAllocation, 0)
-  );
-  const unresolvedLateAllocation = roundNumber(
-    Math.max(metrics.comp_off_adjusted_against_late_days - exactLateAllocation, 0)
-  );
-
-  function appendUnavailableUsageTrail(
-    adjustmentValue: number,
-    adjustmentKind: "absent_offset" | "late_offset",
-    adjustmentReason: string,
-    payrollImpact: string
-  ) {
-    let remaining = roundNumber(adjustmentValue);
-    if (remaining <= 0) {
-      return;
-    }
-
-    for (const sourceBalance of sourceBalances) {
-      if (remaining <= 0) {
-        break;
-      }
-      if (sourceBalance.remaining_value <= 0) {
-        continue;
-      }
-      const allocation = roundNumber(
-        Math.min(sourceBalance.remaining_value, remaining)
-      );
-      if (allocation <= 0) {
-        continue;
-      }
-      sourceBalance.remaining_value = roundNumber(
-        sourceBalance.remaining_value - allocation
-      );
-      remaining = roundNumber(remaining - allocation);
-      compOffUsageTrail.push({
-        source_kind: sourceBalance.source_kind,
-        source_record_id: sourceBalance.source_record_id,
-        source_date: sourceBalance.source_date,
-        source_day_label: sourceBalance.source_day_label,
-        source_attendance_result: sourceBalance.source_attendance_result,
-        source_working_hours: sourceBalance.source_working_hours,
-        source_reason: sourceBalance.source_reason,
-        earned_value: sourceBalance.earned_value,
-        adjusted_record_id: "",
-        adjusted_date: "",
-        adjusted_day_label: "",
-        adjusted_attendance_result: "",
-        adjusted_working_hours: "",
-        adjustment_value: allocation,
-        adjustment_kind: adjustmentKind,
-        adjustment_reason: adjustmentReason,
-        payroll_impact: payrollImpact,
-      });
-    }
-  }
-
-  appendUnavailableUsageTrail(
-    unresolvedAbsentAllocation,
-    "absent_offset",
-    "Absent Day Offset",
-    "Final payable increased by 1.0 day"
-  );
-  appendUnavailableUsageTrail(
-    unresolvedLateAllocation,
-    "late_offset",
-    "Late Deduction Offset",
-    "Late deduction reduced by 1.0 day"
-  );
-
-  const compOffLedger: AttendanceCompOffLedgerItem[] = sourceBalances.map((sourceBalance) => ({
-    source_kind: sourceBalance.source_kind,
-    source_record_id: sourceBalance.source_record_id,
-    source_date: sourceBalance.source_date,
-    source_day_label: sourceBalance.source_day_label,
-    source_attendance_result: sourceBalance.source_attendance_result,
-    source_working_hours: sourceBalance.source_working_hours,
-    source_reason: sourceBalance.source_reason,
-    earned_value: sourceBalance.earned_value,
-    used_value: roundNumber(sourceBalance.earned_value - sourceBalance.remaining_value),
-    balance_value: roundNumber(Math.max(sourceBalance.remaining_value, 0)),
-  }));
-
-  const calculationBreakdown: AttendanceCalculationBreakdown = {
-    calendar_days: new Set(rows.map((row) => row.date).filter(Boolean)).size,
-    present_days: metrics.present_count,
-    half_days: metrics.half_day_count,
-    absent_days: metrics.absent_count,
-    paid_week_off_days: metrics.paid_week_off_count,
-    unpaid_week_off_days: metrics.unpaid_week_off_count,
-    paid_holiday_days: metrics.paid_holiday_count,
-    unpaid_holiday_days: metrics.unpaid_holiday_count,
-    pending_review_days: metrics.pending_review_count,
-    half_day_deduction_days: roundNumber(metrics.half_day_count * 0.5),
-    gross_payable_days: roundNumber(metrics.gross_payable_days),
-    late_penalty_before_comp_off: roundNumber(metrics.late_penalty_deductions),
-    late_penalty_after_comp_off: roundNumber(metrics.late_penalty_after_comp_off),
-    comp_off_adjusted_against_absent_days: roundNumber(
-      metrics.comp_off_adjusted_against_absent_days
-    ),
-    comp_off_adjusted_against_late_days: roundNumber(
-      metrics.comp_off_adjusted_against_late_days
-    ),
-    final_payable_days: roundNumber(metrics.payable_days),
-  };
-
-  return {
-    month,
-    calendar_days: calculationBreakdown.calendar_days,
-    comp_off_ledger: compOffLedger,
-    comp_off_usage_trail: compOffUsageTrail,
-    late_deduction: lateDeduction,
-    calculation_breakdown: calculationBreakdown,
-  };
-}
-
 function isSunday(dateValue: string) {
   if (!dateValue) {
     return false;
@@ -962,25 +666,6 @@ function isIrregularPunchRow(row: AttendanceProcessedRow) {
   );
 }
 
-function hasEarlyLoginFlag(row: AttendanceProcessedRow) {
-  if (row.derived_flags.includes("early_login")) {
-    return true;
-  }
-  if (!row.in_time) {
-    return false;
-  }
-  const timeMatch = row.in_time.match(/(\d{2}):(\d{2})$/);
-  if (!timeMatch) {
-    return false;
-  }
-  const hours = Number(timeMatch[1]);
-  const minutes = Number(timeMatch[2]);
-  if (Number.isNaN(hours) || Number.isNaN(minutes)) {
-    return false;
-  }
-  return hours < 10;
-}
-
 function isPresentClassification(row: AttendanceProcessedRow) {
   return row.final_status_code === "present" || row.final_status_code === "present_late";
 }
@@ -995,9 +680,4 @@ function isHalfDayClassification(row: AttendanceProcessedRow) {
 
 function normalizeText(value: string) {
   return value.trim().toLowerCase();
-}
-
-function formatMetricNumber(value: number) {
-  const rounded = roundNumber(value);
-  return rounded.toFixed(Number.isInteger(rounded) ? 0 : 2);
 }

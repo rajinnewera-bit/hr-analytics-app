@@ -206,83 +206,30 @@ class AttendanceStatusSummary(BaseModel):
     comp_off_earned_count: int
     comp_off_adjusted_days: float
     late_entry_count: int
-    early_login_count: int = 0
+    early_login_count: int
     early_logout_count: int
     overnight_exit_count: int
     missing_punch_count: int
 
 
 class AttendanceCompOffUsageTrailItem(BaseModel):
-    source_kind: str = "attendance_day"
-    source_record_id: str = ""
-    source_date: str = ""
-    source_day_label: str = ""
-    source_attendance_result: str = ""
+    source_record_id: str
+    source_date: str
+    source_day: str
     source_working_hours: str = ""
-    source_reason: str = ""
-    earned_value: float = 0.0
-    adjusted_record_id: str = ""
-    adjusted_date: str = ""
-    adjusted_day_label: str = ""
-    adjusted_attendance_result: str = ""
-    adjusted_working_hours: str = ""
-    adjustment_value: float = 0.0
-    adjustment_kind: str = ""
-    adjustment_reason: str = ""
-    payroll_impact: str = ""
-
-
-class AttendanceCompOffLedgerItem(BaseModel):
-    source_kind: str = "attendance_day"
-    source_record_id: str = ""
-    source_date: str = ""
-    source_day_label: str = ""
-    source_attendance_result: str = ""
-    source_working_hours: str = ""
-    source_reason: str = ""
-    earned_value: float = 0.0
-    used_value: float = 0.0
-    balance_value: float = 0.0
-
-
-class AttendanceLateDeductionExplanation(BaseModel):
-    late_rule_label: str
-    late_cutoff_time: str
-    total_late_flags: int
-    late_source_dates: list[str]
-    late_source_record_ids: list[str]
-    deductions_before_comp_off: float
-    comp_off_adjusted_against_late_days: float
-    deductions_after_comp_off: float
-    formula_text: str
-
-
-class AttendanceCalculationBreakdown(BaseModel):
-    calendar_days: int
-    present_days: int
-    half_days: int
-    absent_days: int
-    paid_week_off_days: int
-    unpaid_week_off_days: int
-    paid_holiday_days: int
-    unpaid_holiday_days: int
-    pending_review_days: int
-    half_day_deduction_days: float
-    gross_payable_days: float
-    late_penalty_before_comp_off: float
-    late_penalty_after_comp_off: float
-    comp_off_adjusted_against_absent_days: float
-    comp_off_adjusted_against_late_days: float
-    final_payable_days: float
+    earned_value: float
+    used_value: float
+    adjusted_against_record_id: str = ""
+    adjusted_against_date: str = ""
+    adjusted_against_day: str = ""
+    adjusted_against_type: str
+    adjusted_against_reason: str
+    reference_dates: list[str] = []
+    payroll_effect: str
 
 
 class AttendanceEmployeeMonthlyExplainability(BaseModel):
-    month: str
-    calendar_days: int
-    comp_off_ledger: list[AttendanceCompOffLedgerItem]
-    comp_off_usage_trail: list[AttendanceCompOffUsageTrailItem]
-    late_deduction: AttendanceLateDeductionExplanation
-    calculation_breakdown: AttendanceCalculationBreakdown
+    comp_off_usage_trail: list[AttendanceCompOffUsageTrailItem] = []
 
 
 class AttendanceEmployeeMonthlySummaryItem(BaseModel):
@@ -301,7 +248,7 @@ class AttendanceEmployeeMonthlySummaryItem(BaseModel):
     comp_off_earned_count: int
     comp_off_adjusted_days: float
     late_entry_count: int
-    early_login_count: int = 0
+    early_login_count: int
     early_logout_count: int
     overnight_exit_count: int
     missing_punch_count: int
@@ -332,7 +279,7 @@ class AttendanceUnitSummaryItem(BaseModel):
     comp_off_earned_count: int
     comp_off_adjusted_days: float
     late_entry_count: int
-    early_login_count: int = 0
+    early_login_count: int
     early_logout_count: int
     overnight_exit_count: int
     missing_punch_count: int

@@ -49,7 +49,9 @@ export function AttendanceUploadPanel() {
     }
   };
 
-  const hasExistingUploadState = Boolean(selectedFile || result || errorMessage || uploadMeta);
+  const hasExistingUploadState = Boolean(
+    selectedFile || result || errorMessage || uploadMeta
+  );
   const hasActiveWorkbook = Boolean(result || uploadMeta);
 
   useEffect(() => {

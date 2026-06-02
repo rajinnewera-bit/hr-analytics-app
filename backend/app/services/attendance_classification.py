@@ -9,7 +9,6 @@ from app.services.attendance_ingestion import AttendanceNormalizedRecord
 from app.services.attendance_rule_engine import rule_hours, rule_time, rule_tokens
 
 FEMALE_TOKENS = {"female", "f", "woman", "women", "lady"}
-EARLY_LOGIN_CUTOFF = time(hour=10, minute=0)
 
 
 @dataclass
@@ -292,6 +291,21 @@ def _classify_record(
             derived_flags=derived_flags,
         )
 
+    if is_half_day_entry:
+        return _non_working_day_adjustment(
+            FinalAttendanceDecision(
+            status_code="half_day",
+            status_label="Half Day",
+            rule_id="half_day_late_start",
+            explanation="The in-time is at or after the half-day cutoff for the day.",
+            payroll_value=0.5,
+            payroll_label="0.5 Payable Day",
+            derived_flags=derived_flags,
+            ),
+            is_week_off=is_week_off,
+            is_explicit_holiday=is_explicit_holiday,
+        )
+
     if worked_hours < 3:
         return FinalAttendanceDecision(
             status_code="absent",
@@ -303,28 +317,13 @@ def _classify_record(
             derived_flags=derived_flags,
         )
 
-    if worked_hours < minimum_present_hours:
+    if worked_hours <= minimum_present_hours:
         return _non_working_day_adjustment(
             FinalAttendanceDecision(
             status_code="half_day",
             status_label="Half Day",
-            rule_id="half_day_below_minimum_hours",
-            explanation=f"Working hours are below the configured minimum present threshold of {minimum_present_hours:.2f} hours.",
-            payroll_value=0.5,
-            payroll_label="0.5 Payable Day",
-            derived_flags=derived_flags,
-            ),
-            is_week_off=is_week_off,
-            is_explicit_holiday=is_explicit_holiday,
-        )
-
-    if is_half_day_entry:
-        return _non_working_day_adjustment(
-            FinalAttendanceDecision(
-            status_code="half_day",
-            status_label="Half Day",
-            rule_id="half_day_late_start",
-            explanation="The in-time is at or after the half-day cutoff for the day.",
+            rule_id="half_day_at_or_below_minimum_hours",
+            explanation=f"Working hours are at or below the configured minimum present threshold of {minimum_present_hours:.2f} hours.",
             payroll_value=0.5,
             payroll_label="0.5 Payable Day",
             derived_flags=derived_flags,
@@ -662,7 +661,7 @@ def _build_derived_flags(
 ) -> list[str]:
     flags: list[str] = []
     late_flag_suppressed = "late_regularized" in anomaly_flags
-    if in_time is not None and in_time < EARLY_LOGIN_CUTOFF:
+    if in_time is not None and in_time < time(hour=10, minute=0):
         flags.append("early_login")
     if is_late and not late_flag_suppressed and not suppress_discipline_flags:
         flags.append("late_entry")

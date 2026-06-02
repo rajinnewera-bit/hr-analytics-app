@@ -27,7 +27,7 @@ function safeRemoveLocalKey() {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
-    // Ignore storage cleanup failures so the app can continue working.
+    // Ignore storage cleanup failures so the UI can keep working.
   }
 }
 

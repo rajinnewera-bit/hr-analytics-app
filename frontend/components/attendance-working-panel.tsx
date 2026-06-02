@@ -102,6 +102,7 @@ export function AttendanceWorkingPanel() {
             </div>
           </section>
         ) : null}
+
         {!result ? (
           <section className="rounded-[1.5rem] border border-dashed border-slate-300 bg-white/90 p-8 text-center shadow-sm">
             <p className="text-lg font-semibold text-ink">No attendance session loaded</p>

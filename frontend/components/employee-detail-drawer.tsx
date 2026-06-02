@@ -499,6 +499,10 @@ export function EmployeeDetailDrawer({
                       />
                       <ReadOnlyField label="OT Hours" value={String(attendanceSummary.ot_hours)} />
                       <ReadOnlyField label="Late Marks" value={String(attendanceSummary.late_marks)} />
+                      <ReadOnlyField
+                        label="Early Logins"
+                        value={String(attendanceSummary.early_login_marks)}
+                      />
                     </div>
                   ) : null}
                 </>

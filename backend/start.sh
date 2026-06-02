@@ -6,4 +6,8 @@ cd "$SCRIPT_DIR"
 
 PORT="${PORT:-8000}"
 
-exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
+if command -v uvicorn >/dev/null 2>&1; then
+  exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
+fi
+
+exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
