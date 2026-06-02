@@ -16,6 +16,11 @@ import {
   clearAttendanceSnapshot,
   saveAttendanceSnapshot,
 } from "@/lib/attendance-snapshot";
+import {
+  buildApiUrl,
+  getApiBaseUrlConfigurationMessage,
+  resolveApiBaseUrl,
+} from "@/lib/api-client";
 import { normalizeUploadResponse } from "@/lib/upload-response";
 import {
   clearUploadWorkspaceStorage,
@@ -76,14 +81,26 @@ function normalizeAnalysisType(value: string | null | undefined): AnalysisType {
   return "Auto Detect";
 }
 
-function resolveApiBaseUrl() {
-  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
-    return process.env.NEXT_PUBLIC_API_BASE_URL;
+function describeApiConnectivityError(apiBaseUrl: string | null, actionLabel: string) {
+  if (!apiBaseUrl) {
+    return getApiBaseUrlConfigurationMessage();
   }
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
-  }
-  return "http://127.0.0.1:8000";
+
+  return `Unable to reach the upload service while trying to ${actionLabel}. Check that ${apiBaseUrl} is correct, the backend is deployed and awake, and CORS allows this frontend origin.`;
+}
+
+function logApiConnectivityError(
+  actionLabel: string,
+  apiBaseUrl: string | null,
+  path: string,
+  error: unknown
+) {
+  console.error(`Attendance upload API request failed while trying to ${actionLabel}.`, {
+    apiBaseUrl,
+    path,
+    origin: typeof window !== "undefined" ? window.location.origin : null,
+    error,
+  });
 }
 
 type UploadWorkspaceContextValue = {
@@ -99,7 +116,7 @@ type UploadWorkspaceContextValue = {
   errorMessage: string | null;
   resultTabs: readonly (readonly [ResultTab, string])[];
   workspacePersistenceMessage: string | null;
-  apiBaseUrl: string;
+  apiBaseUrl: string | null;
   setActiveResultTab: (tab: ResultTab) => void;
   handleFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   handleSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -198,7 +215,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
         const targetSheet = storedMeta.selectedSheet || "CSV Data";
         const encodedSheetName = encodeURIComponent(targetSheet);
         const response = await fetch(
-          `${apiBaseUrl}/upload/${storedMeta.uploadId}/sheet/${encodedSheetName}`,
+          buildApiUrl(`/upload/${storedMeta.uploadId}/sheet/${encodedSheetName}`),
           { signal: controller.signal }
         );
         const data = await parseApiResponse(response);
@@ -222,12 +239,31 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
         if (!isMountedRef.current) {
           return;
         }
+        if (
+          error instanceof TypeError ||
+          (error instanceof Error &&
+            error.message === getApiBaseUrlConfigurationMessage())
+        ) {
+          logApiConnectivityError(
+            "restore the previous upload session",
+            apiBaseUrl,
+            `/upload/${storedMeta.uploadId}/sheet/${storedMeta.selectedSheet || "CSV Data"}`,
+            error
+          );
+        }
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           setResultState(null);
           clearUploadWorkspaceStorage();
           clearAttendanceSnapshot();
           setWorkspacePersistenceMessage(
-            "The previous upload session could not be restored. Upload the workbook again to continue."
+            error instanceof TypeError ||
+            (error instanceof Error &&
+              error.message === getApiBaseUrlConfigurationMessage())
+              ? describeApiConnectivityError(
+                  apiBaseUrl,
+                  "restore the previous upload session"
+                )
+              : "The previous upload session could not be restored. Upload the workbook again to continue."
           );
         }
       } finally {
@@ -352,7 +388,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       formData.append("file", selectedFile);
       formData.append("analysis_type", analysisType);
 
-      const response = await fetch(`${apiBaseUrl}/upload`, {
+      const response = await fetch(buildApiUrl("/upload"), {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -386,7 +422,23 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
         } else if (uploadAbortReasonRef.current === "timeout") {
           setErrorMessage(uploadTimedOutMessage);
         }
+      } else if (error instanceof TypeError) {
+        logApiConnectivityError("upload the selected workbook", apiBaseUrl, "/upload", error);
+        setErrorMessage(
+          describeApiConnectivityError(apiBaseUrl, "upload the selected workbook")
+        );
       } else {
+        if (
+          error instanceof Error &&
+          error.message === getApiBaseUrlConfigurationMessage()
+        ) {
+          logApiConnectivityError(
+            "upload the selected workbook",
+            apiBaseUrl,
+            "/upload",
+            error
+          );
+        }
         const message = error instanceof Error ? error.message : uploadFailedMessage;
         setErrorMessage(message);
       }
@@ -430,7 +482,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       const encodedSheetName = encodeURIComponent(sheetName);
       const response = await fetch(
-        `${apiBaseUrl}/upload/${result.upload_id}/sheet/${encodedSheetName}`,
+        buildApiUrl(`/upload/${result.upload_id}/sheet/${encodedSheetName}`),
         { signal: controller.signal }
       );
       const data = await parseApiResponse(response);
@@ -450,7 +502,26 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!isMountedRef.current || sheetRequestIdRef.current !== requestId) {
         return;
       }
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
+      if (error instanceof TypeError) {
+        logApiConnectivityError(
+          "analyze the selected sheet",
+          apiBaseUrl,
+          `/upload/${result.upload_id}/sheet/${sheetName}`,
+          error
+        );
+        setErrorMessage(describeApiConnectivityError(apiBaseUrl, "analyze the selected sheet"));
+      } else if (!(error instanceof DOMException && error.name === "AbortError")) {
+        if (
+          error instanceof Error &&
+          error.message === getApiBaseUrlConfigurationMessage()
+        ) {
+          logApiConnectivityError(
+            "analyze the selected sheet",
+            apiBaseUrl,
+            `/upload/${result.upload_id}/sheet/${sheetName}`,
+            error
+          );
+        }
         const message = error instanceof Error ? error.message : sheetFailedMessage;
         setErrorMessage(message);
       }
@@ -479,7 +550,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
 
     try {
       const response = await fetch(
-        `${apiBaseUrl}/upload/${result.upload_id}/attendance-review`,
+        buildApiUrl(`/upload/${result.upload_id}/attendance-review`),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -510,9 +581,32 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!isMountedRef.current || attendanceRequestIdRef.current !== requestId) {
         return;
       }
-      const message =
-        error instanceof Error ? error.message : "Unable to update attendance review.";
-      setErrorMessage(message);
+      if (error instanceof TypeError) {
+        logApiConnectivityError(
+          "save attendance review updates",
+          apiBaseUrl,
+          `/upload/${result.upload_id}/attendance-review`,
+          error
+        );
+        setErrorMessage(
+          describeApiConnectivityError(apiBaseUrl, "save attendance review updates")
+        );
+      } else {
+        if (
+          error instanceof Error &&
+          error.message === getApiBaseUrlConfigurationMessage()
+        ) {
+          logApiConnectivityError(
+            "save attendance review updates",
+            apiBaseUrl,
+            `/upload/${result.upload_id}/attendance-review`,
+            error
+          );
+        }
+        const message =
+          error instanceof Error ? error.message : "Unable to update attendance review.";
+        setErrorMessage(message);
+      }
     } finally {
       if (isMountedRef.current && attendanceRequestIdRef.current === requestId) {
         setIsUpdatingAttendance(false);
@@ -534,7 +628,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
 
     try {
       const response = await fetch(
-        `${apiBaseUrl}/upload/${result.upload_id}/attendance-merge`,
+        buildApiUrl(`/upload/${result.upload_id}/attendance-merge`),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -563,8 +657,29 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!isMountedRef.current || mergeRequestIdRef.current !== requestId) {
         return;
       }
-      const message = error instanceof Error ? error.message : mergeFailedMessage;
-      setErrorMessage(message);
+      if (error instanceof TypeError) {
+        logApiConnectivityError(
+          "merge attendance records",
+          apiBaseUrl,
+          `/upload/${result.upload_id}/attendance-merge`,
+          error
+        );
+        setErrorMessage(describeApiConnectivityError(apiBaseUrl, "merge attendance records"));
+      } else {
+        if (
+          error instanceof Error &&
+          error.message === getApiBaseUrlConfigurationMessage()
+        ) {
+          logApiConnectivityError(
+            "merge attendance records",
+            apiBaseUrl,
+            `/upload/${result.upload_id}/attendance-merge`,
+            error
+          );
+        }
+        const message = error instanceof Error ? error.message : mergeFailedMessage;
+        setErrorMessage(message);
+      }
     } finally {
       if (isMountedRef.current && mergeRequestIdRef.current === requestId) {
         setIsMergingAttendance(false);
