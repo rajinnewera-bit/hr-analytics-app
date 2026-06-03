@@ -1003,6 +1003,37 @@ function renderMetricCell(
             <TopSummaryCard label="Unpaid Sundays" value={display.unpaidSundays.toString()} tone="slate" onClick={() => openReviewFilter("unpaid_weekoff")} />
           </div>
 
+          {safeSummary.audit_log.length > 0 ? (
+            <CompactInfoCard
+              title="Audit Trail"
+              subtitle="Saved attendance actions are listed here in reverse chronological order."
+            >
+              <div className="space-y-2">
+                {safeSummary.audit_log.slice(0, 8).map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slateText"
+                  >
+                    <p className="font-semibold text-ink">
+                      {formatDisplayTimestamp(entry.timestamp)} • {humanizeAuditAction(entry.action_type)}
+                    </p>
+                    {entry.employee ? (
+                      <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">
+                        {entry.employee}
+                      </p>
+                    ) : null}
+                    <p className="mt-1">{entry.details || entry.new_value}</p>
+                    {entry.previous_value || entry.new_value ? (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Previous: {entry.previous_value || "None"} • New: {entry.new_value || "None"}
+                      </p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </CompactInfoCard>
+          ) : null}
+
           <div className="grid items-start gap-4 xl:grid-cols-[1.08fr_0.92fr]">
             <div className="space-y-4">
           <CompactInfoCard
@@ -2634,6 +2665,36 @@ function formatDayLabel(dateValue: string) {
   }
 
   return new Intl.DateTimeFormat("en-IN", { weekday: "short" }).format(date);
+}
+
+function formatDisplayTimestamp(value: string) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function humanizeAuditAction(value: string) {
+  const labels: Record<string, string> = {
+    merge: "Merge Saved",
+    review: "Regularization Saved",
+    holiday: "Holiday Adjustment Saved",
+    administrative_exception: "Payroll Correction Saved",
+    policy_rule: "Policy Rule Saved",
+  };
+  return labels[value] ?? value;
 }
 
 const reviewFilterOptions: Array<{ value: ReviewFilter; label: string }> = [

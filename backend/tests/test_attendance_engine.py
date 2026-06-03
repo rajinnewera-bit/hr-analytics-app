@@ -1,19 +1,25 @@
 import unittest
 from typing import Optional
+from uuid import uuid4
 
 import pandas as pd
 
 from app.schemas.upload import (
     AttendanceAdministrativeException,
+    AttendanceEmployeeMergeSource,
     AttendanceExceptionActionOption,
     AttendanceExceptionCandidate,
     AttendanceExceptionGroup,
     AttendanceHolidayMarker,
+    AttendanceMergeInstruction,
     AttendanceReviewDecision,
+    AttendanceWorkingRuleState,
 )
+from app.db import init_database
 from app.services.attendance_anomaly import detect_attendance_anomalies
 from app.services.attendance_classification import classify_attendance_records
 from app.services.attendance_ingestion import AttendanceNormalizedRecord
+from app.services.attendance_merge_workflow import apply_employee_merges
 from app.services.attendance_payroll import (
     _calculate_comp_off_balance,
     apply_monthly_payroll_reconciliation,
@@ -21,6 +27,7 @@ from app.services.attendance_payroll import (
     build_status_summary,
     calculate_late_penalty_deductions,
 )
+from app.services.attendance_rule_store_service import load_saved_rule_state, save_rule_state
 from app.services.attendance_review_workflow import apply_attendance_review_workflow
 from app.services.attendance_rule_engine import build_default_attendance_policy_rules
 from app.services.attendance_validation import _apply_marked_holidays
@@ -81,6 +88,10 @@ def classify_single_record(record: AttendanceNormalizedRecord):
 
 
 class AttendanceEngineTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        init_database()
+
     def test_comp_off_balance_returns_remaining_positive_amount(self):
         self.assertEqual(_calculate_comp_off_balance(4.0, 1.5), 2.5)
 
@@ -1423,6 +1434,115 @@ class AttendanceEngineTests(unittest.TestCase):
 
         self.assertEqual(processed_row.final_status_code, "irregular_review")
         self.assertEqual(processed_row.action_source, "")
+
+    def test_employee_merge_rules_persist_by_dataset_key_and_sheet(self):
+        dataset_key = f"dataset-{uuid4().hex}"
+        saved_state = save_rule_state(
+            dataset_key=dataset_key,
+            sheet_name="BasicWorkDurationReport",
+            state=AttendanceWorkingRuleState(
+                dataset_key=dataset_key,
+                sheet_name="BasicWorkDurationReport",
+                merge_instructions=[
+                    AttendanceMergeInstruction(
+                        final_employee_name="DONA MARY SOHPDANG",
+                        final_employee_code="B&S118",
+                        sources=AttendanceEmployeeMergeSource(
+                            source_names=["Dona", "DONA MARY SOHPDANG"],
+                            source_codes=["6", "B&S118"],
+                        ),
+                    )
+                ],
+                review_decisions=[
+                    AttendanceReviewDecision(
+                        exception_id="late-b-s118-2026-05-02",
+                        action_key="mark_present",
+                        reason="Manager approved",
+                    )
+                ],
+            ),
+            actor="QA Tester",
+        )
+
+        reloaded_state = load_saved_rule_state(dataset_key, "BasicWorkDurationReport")
+
+        self.assertEqual(saved_state.saved_by, "QA Tester")
+        self.assertEqual(len(reloaded_state.merge_instructions), 1)
+        self.assertEqual(
+            reloaded_state.merge_instructions[0].final_employee_name,
+            "DONA MARY SOHPDANG",
+        )
+        self.assertEqual(
+            sorted(reloaded_state.merge_instructions[0].sources.source_names),
+            ["DONA MARY SOHPDANG", "Dona"],
+        )
+        self.assertEqual(len(reloaded_state.review_decisions), 1)
+        self.assertEqual(
+            reloaded_state.review_decisions[0].exception_id,
+            "late-b-s118-2026-05-02",
+        )
+
+    def test_dona_and_mahfuz_merges_behave_identically(self):
+        records = [
+            make_record(
+                record_id="dona-1",
+                employee_code="6",
+                employee_name="Dona",
+                date_value="2026-05-05",
+            ),
+            make_record(
+                record_id="dona-2",
+                employee_code="B&S118",
+                employee_name="DONA MARY SOHPDANG",
+                date_value="2026-05-05",
+            ),
+            make_record(
+                record_id="mahfuz-1",
+                employee_code="1",
+                employee_name="Mahfuz",
+                date_value="2026-05-06",
+            ),
+            make_record(
+                record_id="mahfuz-2",
+                employee_code="MC003",
+                employee_name="MEHFUJ ALAM",
+                date_value="2026-05-06",
+            ),
+        ]
+
+        merged_records = apply_employee_merges(
+            records,
+            [
+                AttendanceMergeInstruction(
+                    final_employee_name="DONA MARY SOHPDANG",
+                    final_employee_code="B&S118",
+                    sources=AttendanceEmployeeMergeSource(
+                        source_names=["Dona", "DONA MARY SOHPDANG"],
+                        source_codes=["6", "B&S118"],
+                    ),
+                ),
+                AttendanceMergeInstruction(
+                    final_employee_name="MEHFUJ ALAM",
+                    final_employee_code="MC003",
+                    sources=AttendanceEmployeeMergeSource(
+                        source_names=["Mahfuz", "MEHFUJ ALAM"],
+                        source_codes=["1", "MC003"],
+                    ),
+                ),
+            ],
+        )
+
+        merged_names = sorted(
+            (row.employee_name, row.employee_code, row.date_value.strftime("%Y-%m-%d"))
+            for row in merged_records
+        )
+        self.assertEqual(
+            merged_names,
+            [
+                ("DONA MARY SOHPDANG", "B&S118", "2026-05-05"),
+                ("MEHFUJ ALAM", "MC003", "2026-05-06"),
+            ],
+        )
 
 
 if __name__ == "__main__":

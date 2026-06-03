@@ -33,6 +33,7 @@ import type {
   AttendanceMergeInstruction,
   AttendancePolicyRule,
   AttendanceReviewDecision,
+  AttendanceWorkingRuleState,
   UploadResponse,
 } from "@/types/upload";
 
@@ -51,6 +52,140 @@ const uploadTimedOutMessage = "Upload timed out. Please try again.";
 const uploadFailedMessage = "Unable to upload the selected file.";
 const sheetFailedMessage = "Unable to analyze the selected sheet.";
 const mergeFailedMessage = "Unable to merge attendance records.";
+const attendanceSaveFailedMessage = "Unable to save attendance changes.";
+
+function emptyAttendanceRuleState(sheetName = ""): AttendanceWorkingRuleState {
+  return {
+    dataset_key: "",
+    sheet_name: sheetName,
+    merge_instructions: [],
+    review_decisions: [],
+    policy_rules: [],
+    holiday_markers: [],
+    administrative_exceptions: [],
+    saved_at: "",
+    saved_by: "",
+  };
+}
+
+function cloneAttendanceRuleState(
+  state: AttendanceWorkingRuleState | null | undefined,
+  fallbackSheetName = ""
+): AttendanceWorkingRuleState {
+  if (!state) {
+    return emptyAttendanceRuleState(fallbackSheetName);
+  }
+  return {
+    dataset_key: state.dataset_key,
+    sheet_name: state.sheet_name || fallbackSheetName,
+    merge_instructions: state.merge_instructions.map((item) => ({
+      final_employee_name: item.final_employee_name,
+      final_employee_code: item.final_employee_code,
+      sources: {
+        source_names: [...(item.sources.source_names ?? [])],
+        source_codes: [...(item.sources.source_codes ?? [])],
+      },
+      adjustments: item.adjustments
+        ? {
+            ...item.adjustments,
+          }
+        : undefined,
+    })),
+    review_decisions: state.review_decisions.map((item) => ({ ...item })),
+    policy_rules: state.policy_rules.map((item) => ({ ...item })),
+    holiday_markers: state.holiday_markers.map((item) => ({ ...item })),
+    administrative_exceptions: state.administrative_exceptions.map((item) => ({
+      ...item,
+      employee_ids: [...item.employee_ids],
+    })),
+    saved_at: state.saved_at,
+    saved_by: state.saved_by,
+  };
+}
+
+function serializeAttendanceRuleState(state: AttendanceWorkingRuleState | null | undefined) {
+  return JSON.stringify(state ?? emptyAttendanceRuleState());
+}
+
+function deriveAttendanceRuleState(
+  response: UploadResponse | null
+): AttendanceWorkingRuleState {
+  return cloneAttendanceRuleState(
+    response?.attendance_validation_summary?.applied_rule_state,
+    response?.selected_sheet ?? ""
+  );
+}
+
+function countUnsavedRuleChanges(
+  savedState: AttendanceWorkingRuleState | null,
+  draftState: AttendanceWorkingRuleState | null
+) {
+  if (!savedState || !draftState) {
+    return 0;
+  }
+
+  const sectionDelta = (left: unknown[], right: unknown[]) =>
+    Math.abs(left.length - right.length) +
+    right.filter((item, index) => JSON.stringify(item) !== JSON.stringify(left[index])).length;
+
+  return (
+    sectionDelta(savedState.merge_instructions, draftState.merge_instructions) +
+    sectionDelta(savedState.review_decisions, draftState.review_decisions) +
+    sectionDelta(savedState.policy_rules, draftState.policy_rules) +
+    sectionDelta(savedState.holiday_markers, draftState.holiday_markers) +
+    sectionDelta(
+      savedState.administrative_exceptions,
+      draftState.administrative_exceptions
+    )
+  );
+}
+
+function mergeAttendanceInstructions(
+  existing: AttendanceMergeInstruction[],
+  incoming: AttendanceMergeInstruction[]
+) {
+  const nextInstructions = [...existing];
+
+  incoming.forEach((newInstruction) => {
+    const sourceNames = new Set(
+      (newInstruction.sources.source_names ?? []).map((item) => item.trim().toLowerCase())
+    );
+    const sourceCodes = new Set(
+      (newInstruction.sources.source_codes ?? []).map((item) => item.trim().toLowerCase())
+    );
+    const finalName = newInstruction.final_employee_name.trim().toLowerCase();
+    const finalCode = (newInstruction.final_employee_code ?? "").trim().toLowerCase();
+
+    const filteredInstructions = nextInstructions.filter((existingInstruction) => {
+      const existingSourceNames = new Set(
+        (existingInstruction.sources.source_names ?? []).map((item) =>
+          item.trim().toLowerCase()
+        )
+      );
+      const existingSourceCodes = new Set(
+        (existingInstruction.sources.source_codes ?? []).map((item) =>
+          item.trim().toLowerCase()
+        )
+      );
+      const existingFinalName = existingInstruction.final_employee_name.trim().toLowerCase();
+      const existingFinalCode = (existingInstruction.final_employee_code ?? "")
+        .trim()
+        .toLowerCase();
+
+      const overlapsName = [...sourceNames].some((item) => existingSourceNames.has(item));
+      const overlapsCode = [...sourceCodes].some((item) => existingSourceCodes.has(item));
+      const sameTarget =
+        existingFinalName === finalName && existingFinalCode === finalCode;
+
+      return !(overlapsName || overlapsCode || sameTarget);
+    });
+
+    nextInstructions.length = 0;
+    nextInstructions.push(...filteredInstructions, newInstruction);
+  });
+
+  return nextInstructions;
+}
 
 async function parseApiResponse(response: Response) {
   const responseText = await response.text();
@@ -110,12 +245,15 @@ type UploadWorkspaceContextValue = {
   isSwitchingSheet: boolean;
   isUpdatingAttendance: boolean;
   isMergingAttendance: boolean;
+  isSavingAttendanceChanges: boolean;
   isProcessing: boolean;
   result: UploadResponse | null;
   activeResultTab: ResultTab;
   errorMessage: string | null;
   resultTabs: readonly (readonly [ResultTab, string])[];
   workspacePersistenceMessage: string | null;
+  hasUnsavedAttendanceChanges: boolean;
+  unsavedAttendanceChangeCount: number;
   apiBaseUrl: string | null;
   setActiveResultTab: (tab: ResultTab) => void;
   handleFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -133,6 +271,7 @@ type UploadWorkspaceContextValue = {
     instructions: AttendanceMergeInstruction[],
     dryRun: boolean
   ) => Promise<void>;
+  handleSaveAttendanceChanges: () => Promise<void>;
   handleStartNewUpload: () => void;
   setAnalysisType: (value: AnalysisType) => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
@@ -147,12 +286,17 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
   const [isSwitchingSheet, setIsSwitchingSheet] = useState(false);
   const [isUpdatingAttendance, setIsUpdatingAttendance] = useState(false);
   const [isMergingAttendance, setIsMergingAttendance] = useState(false);
+  const [isSavingAttendanceChanges, setIsSavingAttendanceChanges] = useState(false);
   const [result, setResultState] = useState<UploadResponse | null>(null);
   const [activeResultTab, setActiveResultTab] = useState<ResultTab>("overview");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [workspacePersistenceMessage, setWorkspacePersistenceMessage] = useState<string | null>(
     null
   );
+  const [savedAttendanceRuleState, setSavedAttendanceRuleState] =
+    useState<AttendanceWorkingRuleState | null>(null);
+  const [draftAttendanceRuleState, setDraftAttendanceRuleState] =
+    useState<AttendanceWorkingRuleState | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isMountedRef = useRef(false);
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
@@ -164,7 +308,10 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
   const attendanceRequestIdRef = useRef(0);
   const mergeRequestIdRef = useRef(0);
 
-  const setResult = useCallback((next: UploadResponse | null) => {
+  const setResult = useCallback((
+    next: UploadResponse | null,
+    options?: { ruleStateMode?: "saved" | "draft" }
+  ) => {
     setResultState(next);
     const workspaceSaveResult = saveUploadWorkspace(next);
     const snapshotSaveResult = next
@@ -178,10 +325,33 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
         next.analysis_overview.engine === "generic" ? "overview" : "analysis"
       );
     }
+    const nextRuleState = deriveAttendanceRuleState(next);
+    if ((options?.ruleStateMode ?? "saved") === "saved") {
+      setSavedAttendanceRuleState(next ? nextRuleState : null);
+      setDraftAttendanceRuleState(next ? nextRuleState : null);
+    } else {
+      setDraftAttendanceRuleState(next ? nextRuleState : null);
+    }
   }, []);
 
+  const hasUnsavedAttendanceChanges = useMemo(
+    () =>
+      serializeAttendanceRuleState(savedAttendanceRuleState) !==
+      serializeAttendanceRuleState(draftAttendanceRuleState),
+    [draftAttendanceRuleState, savedAttendanceRuleState]
+  );
+
+  const unsavedAttendanceChangeCount = useMemo(
+    () => countUnsavedRuleChanges(savedAttendanceRuleState, draftAttendanceRuleState),
+    [draftAttendanceRuleState, savedAttendanceRuleState]
+  );
+
   const isProcessing =
-    isUploading || isSwitchingSheet || isUpdatingAttendance || isMergingAttendance;
+    isUploading ||
+    isSwitchingSheet ||
+    isUpdatingAttendance ||
+    isMergingAttendance ||
+    isSavingAttendanceChanges;
   const resultEngine = result?.analysis_overview.engine ?? "generic";
   const resultTabs = useMemo(
     () =>
@@ -282,7 +452,11 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     isMountedRef.current = true;
 
-    const handleBeforeUnload = () => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (hasUnsavedAttendanceChanges) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
       clearUploadTimeout();
       abortUpload("refresh");
       abortSheetSwitch();
@@ -296,7 +470,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       abortUpload("refresh");
       abortSheetSwitch();
     };
-  }, []);
+  }, [hasUnsavedAttendanceChanges]);
 
   useEffect(() => {
     if (!resultTabs.some(([tabId]) => tabId === activeResultTab)) {
@@ -544,6 +718,19 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const baseState = cloneAttendanceRuleState(
+      draftAttendanceRuleState ?? savedAttendanceRuleState,
+      payload.sheetName
+    );
+    const nextRuleState: AttendanceWorkingRuleState = {
+      ...baseState,
+      sheet_name: payload.sheetName,
+      review_decisions: payload.decisions,
+      policy_rules: payload.policyRules,
+      holiday_markers: payload.holidayMarkers,
+      administrative_exceptions: payload.administrativeExceptions,
+    };
+
     const requestId = ++attendanceRequestIdRef.current;
     setIsUpdatingAttendance(true);
     setErrorMessage(null);
@@ -560,6 +747,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
             policy_rules: payload.policyRules,
             holiday_markers: payload.holidayMarkers,
             administrative_exceptions: payload.administrativeExceptions,
+            merge_instructions: nextRuleState.merge_instructions,
           }),
         }
       );
@@ -573,7 +761,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
 
       if (isMountedRef.current && attendanceRequestIdRef.current === requestId) {
         const normalizedResponse = normalizeUploadResponse(data as Partial<UploadResponse>);
-        setResult(normalizedResponse);
+        setResult(normalizedResponse, { ruleStateMode: "draft" });
         setErrorMessage(null);
         setAnalysisType(normalizeAnalysisType(normalizedResponse.analysis_type));
       }
@@ -622,6 +810,20 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const baseState = cloneAttendanceRuleState(
+      draftAttendanceRuleState ?? savedAttendanceRuleState,
+      result.selected_sheet
+    );
+    const combinedMergeInstructions = mergeAttendanceInstructions(
+      baseState.merge_instructions,
+      instructions
+    );
+    const nextRuleState: AttendanceWorkingRuleState = {
+      ...baseState,
+      sheet_name: result.selected_sheet,
+      merge_instructions: combinedMergeInstructions,
+    };
+
     const requestId = ++mergeRequestIdRef.current;
     setIsMergingAttendance(true);
     setErrorMessage(null);
@@ -634,7 +836,11 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sheet_name: result.selected_sheet,
-            merge_instructions: instructions,
+            merge_instructions: combinedMergeInstructions,
+            decisions: nextRuleState.review_decisions,
+            policy_rules: nextRuleState.policy_rules,
+            holiday_markers: nextRuleState.holiday_markers,
+            administrative_exceptions: nextRuleState.administrative_exceptions,
             dry_run: dryRun,
           }),
         }
@@ -649,7 +855,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
 
       if (isMountedRef.current && mergeRequestIdRef.current === requestId) {
         const normalizedResponse = normalizeUploadResponse(data as Partial<UploadResponse>);
-        setResult(normalizedResponse);
+        setResult(normalizedResponse, { ruleStateMode: "draft" });
         setErrorMessage(null);
         setAnalysisType(normalizeAnalysisType(normalizedResponse.analysis_type));
       }
@@ -687,6 +893,72 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const handleSaveAttendanceChanges = async () => {
+    if (!result?.upload_id || !draftAttendanceRuleState) {
+      return;
+    }
+
+    setIsSavingAttendanceChanges(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch(
+        buildApiUrl(`/upload/${result.upload_id}/attendance-save`),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sheet_name: draftAttendanceRuleState.sheet_name || result.selected_sheet,
+            merge_instructions: draftAttendanceRuleState.merge_instructions,
+            decisions: draftAttendanceRuleState.review_decisions,
+            policy_rules: draftAttendanceRuleState.policy_rules,
+            holiday_markers: draftAttendanceRuleState.holiday_markers,
+            administrative_exceptions:
+              draftAttendanceRuleState.administrative_exceptions,
+            actor: "HR Operator",
+          }),
+        }
+      );
+
+      const data = await parseApiResponse(response);
+      if (!response.ok) {
+        throw new Error(
+          "detail" in data && data.detail ? data.detail : attendanceSaveFailedMessage
+        );
+      }
+
+      if (isMountedRef.current) {
+        const normalizedResponse = normalizeUploadResponse(data as Partial<UploadResponse>);
+        setResult(normalizedResponse, { ruleStateMode: "saved" });
+        setErrorMessage(null);
+        setAnalysisType(normalizeAnalysisType(normalizedResponse.analysis_type));
+      }
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      if (error instanceof TypeError) {
+        logApiConnectivityError(
+          "save attendance changes",
+          apiBaseUrl,
+          `/upload/${result.upload_id}/attendance-save`,
+          error
+        );
+        setErrorMessage(
+          describeApiConnectivityError(apiBaseUrl, "save attendance changes")
+        );
+      } else {
+        const message =
+          error instanceof Error ? error.message : attendanceSaveFailedMessage;
+        setErrorMessage(message);
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsSavingAttendanceChanges(false);
+      }
+    }
+  };
+
   const value: UploadWorkspaceContextValue = {
     selectedFile,
     analysisType,
@@ -694,12 +966,15 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
     isSwitchingSheet,
     isUpdatingAttendance,
     isMergingAttendance,
+    isSavingAttendanceChanges,
     isProcessing,
     result,
     activeResultTab,
     errorMessage,
     resultTabs,
     workspacePersistenceMessage,
+    hasUnsavedAttendanceChanges,
+    unsavedAttendanceChangeCount,
     apiBaseUrl,
     setActiveResultTab,
     handleFileChange,
@@ -708,6 +983,7 @@ export function UploadWorkspaceProvider({ children }: { children: ReactNode }) {
     handleSheetSelect,
     handleAttendanceReviewUpdate,
     handleAttendanceMerge,
+    handleSaveAttendanceChanges,
     handleStartNewUpload,
     setAnalysisType,
     fileInputRef,

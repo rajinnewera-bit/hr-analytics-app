@@ -75,6 +75,10 @@ export function AttendanceMergeCard({
           ),
     [employeeOptions, searchQuery]
   );
+  const currentMergeRules = useMemo(
+    () => summary.applied_rule_state?.merge_instructions ?? [],
+    [summary.applied_rule_state]
+  );
 
   const selectedRows = useMemo(
     () =>
@@ -183,6 +187,23 @@ export function AttendanceMergeCard({
       <h2 className="text-xl font-semibold text-gray-900 mb-6">Employee Merge Workflow</h2>
 
       <div className="space-y-6">
+        {currentMergeRules.length > 0 ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <p className="text-sm font-semibold text-emerald-900">Current Merge Rules</p>
+            <div className="mt-2 space-y-2 text-sm text-emerald-900">
+              {currentMergeRules.map((rule, index) => (
+                <div key={`${rule.final_employee_name}-${rule.final_employee_code ?? index}`}>
+                  {(rule.sources.source_names ?? []).join(", ") || "Selected employees"} →{" "}
+                  <strong>
+                    {rule.final_employee_name}
+                    {rule.final_employee_code ? ` (${rule.final_employee_code})` : ""}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {/* Employee Selection */}
         <div>
           <div className="mb-4">

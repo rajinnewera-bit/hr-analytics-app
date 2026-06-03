@@ -4,16 +4,20 @@ import pandas as pd
 
 from app.schemas.upload import (
     AttendanceAdministrativeException,
+    AttendanceAuditLogItem,
+    AttendanceMergeInstruction,
     AnalysisOverview,
     AttendanceHolidayMarker,
     AttendancePolicyRule,
     AttendanceReviewDecision,
+    AttendanceWorkingRuleState,
     WorkbookSheetSummary,
 )
 from app.services.attendance_structure import AttendanceSheetPreparation
 from app.services.attendance_validation import (
     build_attendance_validation_summary,
     build_empty_attendance_validation_summary,
+    build_attendance_validation_summary_with_merges,
 )
 from app.services.file_validation import build_empty_validation_summary, build_validation_summary
 
@@ -33,6 +37,9 @@ def route_analysis_engine(
     attendance_policy_rules: Optional[list[AttendancePolicyRule]] = None,
     attendance_holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
     attendance_administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    attendance_merge_instructions: Optional[list[AttendanceMergeInstruction]] = None,
+    applied_rule_state: Optional[AttendanceWorkingRuleState] = None,
+    audit_log: Optional[list[AttendanceAuditLogItem]] = None,
 ) -> dict[str, Any]:
     engine = _resolve_engine(
         analysis_type,
@@ -55,14 +62,30 @@ def route_analysis_engine(
         }
 
     if engine == "attendance":
-        attendance_summary = build_attendance_validation_summary(
-            dataframe,
-            structure_preparation=attendance_structure_preparation,
-            review_decisions=attendance_review_decisions,
-            policy_rules=attendance_policy_rules,
-            holiday_markers=attendance_holiday_markers,
-            administrative_exceptions=attendance_administrative_exceptions,
-        )
+        if attendance_merge_instructions:
+            attendance_summary = build_attendance_validation_summary_with_merges(
+                dataframe,
+                structure_preparation=attendance_structure_preparation,
+                merge_instructions=attendance_merge_instructions,
+                review_decisions=attendance_review_decisions,
+                policy_rules=attendance_policy_rules,
+                holiday_markers=attendance_holiday_markers,
+                administrative_exceptions=attendance_administrative_exceptions,
+                applied_rule_state=applied_rule_state,
+                audit_log=audit_log,
+            )
+        else:
+            attendance_summary = build_attendance_validation_summary(
+                dataframe,
+                structure_preparation=attendance_structure_preparation,
+                review_decisions=attendance_review_decisions,
+                policy_rules=attendance_policy_rules,
+                holiday_markers=attendance_holiday_markers,
+                administrative_exceptions=attendance_administrative_exceptions,
+                merge_instructions=attendance_merge_instructions,
+                applied_rule_state=applied_rule_state,
+                audit_log=audit_log,
+            )
         return {
             "analysis_overview": AnalysisOverview(
                 engine="attendance",

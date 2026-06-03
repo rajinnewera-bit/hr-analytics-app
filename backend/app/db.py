@@ -71,6 +71,74 @@ SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS idx_decision_employee_code
     ON attendance_verification_decisions (employee_code)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_saved_merge_rules (
+        dataset_key TEXT NOT NULL,
+        sheet_name TEXT NOT NULL,
+        merge_instructions_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        PRIMARY KEY (dataset_key, sheet_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_saved_review_decisions (
+        dataset_key TEXT NOT NULL,
+        sheet_name TEXT NOT NULL,
+        review_decisions_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        PRIMARY KEY (dataset_key, sheet_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_saved_policy_rules (
+        dataset_key TEXT NOT NULL,
+        sheet_name TEXT NOT NULL,
+        policy_rules_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        PRIMARY KEY (dataset_key, sheet_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_saved_holiday_markers (
+        dataset_key TEXT NOT NULL,
+        sheet_name TEXT NOT NULL,
+        holiday_markers_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        PRIMARY KEY (dataset_key, sheet_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_saved_administrative_exceptions (
+        dataset_key TEXT NOT NULL,
+        sheet_name TEXT NOT NULL,
+        administrative_exceptions_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        PRIMARY KEY (dataset_key, sheet_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_saved_audit_log (
+        id TEXT PRIMARY KEY,
+        dataset_key TEXT NOT NULL,
+        sheet_name TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        employee TEXT NOT NULL DEFAULT '',
+        previous_value TEXT NOT NULL DEFAULT '',
+        new_value TEXT NOT NULL DEFAULT '',
+        details TEXT NOT NULL DEFAULT '',
+        actor TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_attendance_saved_audit_log_dataset_sheet
+    ON attendance_saved_audit_log (dataset_key, sheet_name, created_at DESC)
+    """,
 )
 
 
@@ -100,4 +168,3 @@ def init_database() -> None:
     with db_cursor() as connection:
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
-

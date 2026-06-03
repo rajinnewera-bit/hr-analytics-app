@@ -11,9 +11,16 @@ from app.config import ALLOWED_FILE_TYPES
 from app.schemas.upload import (
     AttendanceAdministrativeException,
     AttendanceHolidayMarker,
+    AttendanceMergeInstruction,
     AttendancePolicyRule,
     AttendanceReviewDecision,
+    AttendanceWorkingRuleState,
     UploadResponse,
+)
+from app.services.attendance_rule_store_service import (
+    build_dataset_key,
+    list_audit_log,
+    resolve_rule_state,
 )
 from app.services.analysis_router import (
     ATTENDANCE_ANALYSIS_TYPE,
@@ -68,6 +75,9 @@ def _build_response(
     attendance_policy_rules: Optional[list[AttendancePolicyRule]] = None,
     attendance_holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
     attendance_administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    attendance_merge_instructions: Optional[list[AttendanceMergeInstruction]] = None,
+    attendance_rule_state: Optional[AttendanceWorkingRuleState] = None,
+    attendance_audit_log: Optional[list] = None,
 ) -> UploadResponse:
     try:
         analysis_result = route_analysis_engine(
@@ -80,6 +90,9 @@ def _build_response(
             attendance_policy_rules=attendance_policy_rules,
             attendance_holiday_markers=attendance_holiday_markers,
             attendance_administrative_exceptions=attendance_administrative_exceptions,
+            attendance_merge_instructions=attendance_merge_instructions,
+            applied_rule_state=attendance_rule_state,
+            audit_log=attendance_audit_log,
         )
     except Exception:
         logger.exception(
@@ -222,6 +235,8 @@ def _build_csv_preview(
     attendance_policy_rules: Optional[list[AttendancePolicyRule]] = None,
     attendance_holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
     attendance_administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    attendance_merge_instructions: Optional[list[AttendanceMergeInstruction]] = None,
+    dataset_key: str = "",
 ) -> UploadResponse:
     dataframe = _read_csv_dataframe(file_path)
     attendance_structure_preparation = prepare_attendance_sheet(build_raw_like_dataframe(dataframe))
@@ -237,6 +252,17 @@ def _build_csv_preview(
         csv_dataframe=preview_dataframe,
     )
 
+    resolved_rule_state = resolve_rule_state(
+        dataset_key=dataset_key,
+        sheet_name="CSV Data",
+        merge_instructions=attendance_merge_instructions,
+        review_decisions=attendance_review_decisions,
+        policy_rules=attendance_policy_rules,
+        holiday_markers=attendance_holiday_markers,
+        administrative_exceptions=attendance_administrative_exceptions,
+    )
+    attendance_audit_log = list_audit_log(dataset_key, "CSV Data")
+
     return _build_response(
         upload_id=upload_id,
         analysis_type=analysis_type,
@@ -248,10 +274,13 @@ def _build_csv_preview(
         dataframe=preview_dataframe,
         workbook_intelligence_summary=workbook_intelligence_summary,
         attendance_structure_preparation=attendance_structure_preparation,
-        attendance_review_decisions=attendance_review_decisions,
-        attendance_policy_rules=attendance_policy_rules,
-        attendance_holiday_markers=attendance_holiday_markers,
-        attendance_administrative_exceptions=attendance_administrative_exceptions,
+        attendance_review_decisions=resolved_rule_state.review_decisions,
+        attendance_policy_rules=resolved_rule_state.policy_rules,
+        attendance_holiday_markers=resolved_rule_state.holiday_markers,
+        attendance_administrative_exceptions=resolved_rule_state.administrative_exceptions,
+        attendance_merge_instructions=resolved_rule_state.merge_instructions,
+        attendance_rule_state=resolved_rule_state,
+        attendance_audit_log=attendance_audit_log,
     )
 
 
@@ -266,6 +295,8 @@ def _build_excel_preview(
     attendance_policy_rules: Optional[list[AttendancePolicyRule]] = None,
     attendance_holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
     attendance_administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    attendance_merge_instructions: Optional[list[AttendanceMergeInstruction]] = None,
+    dataset_key: str = "",
 ) -> UploadResponse:
     workbook_started_at = perf_counter()
     workbook = _read_excel_workbook(file_path)
@@ -304,6 +335,16 @@ def _build_excel_preview(
         workbook=workbook,
         parsed_sheets={target_sheet_name: dataframe},
     )
+    resolved_rule_state = resolve_rule_state(
+        dataset_key=dataset_key,
+        sheet_name=target_sheet_name,
+        merge_instructions=attendance_merge_instructions,
+        review_decisions=attendance_review_decisions,
+        policy_rules=attendance_policy_rules,
+        holiday_markers=attendance_holiday_markers,
+        administrative_exceptions=attendance_administrative_exceptions,
+    )
+    attendance_audit_log = list_audit_log(dataset_key, target_sheet_name)
 
     return _build_response(
         upload_id=upload_id,
@@ -316,10 +357,13 @@ def _build_excel_preview(
         dataframe=dataframe,
         workbook_intelligence_summary=workbook_intelligence_summary,
         attendance_structure_preparation=attendance_structure_preparation,
-        attendance_review_decisions=attendance_review_decisions,
-        attendance_policy_rules=attendance_policy_rules,
-        attendance_holiday_markers=attendance_holiday_markers,
-        attendance_administrative_exceptions=attendance_administrative_exceptions,
+        attendance_review_decisions=resolved_rule_state.review_decisions,
+        attendance_policy_rules=resolved_rule_state.policy_rules,
+        attendance_holiday_markers=resolved_rule_state.holiday_markers,
+        attendance_administrative_exceptions=resolved_rule_state.administrative_exceptions,
+        attendance_merge_instructions=resolved_rule_state.merge_instructions,
+        attendance_rule_state=resolved_rule_state,
+        attendance_audit_log=attendance_audit_log,
     )
 
 
@@ -331,12 +375,16 @@ def build_file_preview(
     upload_id: str,
     analysis_type: str,
     selected_sheet=None,
+    dataset_key: str = "",
     message: str = "File uploaded and preview generated successfully.",
     attendance_review_decisions: Optional[list[AttendanceReviewDecision]] = None,
     attendance_policy_rules: Optional[list[AttendancePolicyRule]] = None,
     attendance_holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
     attendance_administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    attendance_merge_instructions: Optional[list[AttendanceMergeInstruction]] = None,
 ) -> UploadResponse:
+    effective_dataset_key = dataset_key or build_dataset_key("", original_file_name)
+
     if extension == ".csv":
         if selected_sheet and selected_sheet != "CSV Data":
             raise HTTPException(
@@ -354,6 +402,8 @@ def build_file_preview(
             attendance_policy_rules,
             attendance_holiday_markers,
             attendance_administrative_exceptions,
+            attendance_merge_instructions,
+            effective_dataset_key,
         )
 
     if extension == ".xlsx":
@@ -363,11 +413,13 @@ def build_file_preview(
             upload_id=upload_id,
             analysis_type=analysis_type,
             selected_sheet=selected_sheet,
+            dataset_key=effective_dataset_key,
             message=message,
             attendance_review_decisions=attendance_review_decisions,
             attendance_policy_rules=attendance_policy_rules,
             attendance_holiday_markers=attendance_holiday_markers,
             attendance_administrative_exceptions=attendance_administrative_exceptions,
+            attendance_merge_instructions=attendance_merge_instructions,
         )
 
     raise HTTPException(
@@ -418,7 +470,12 @@ def build_file_preview_with_merges(
     upload_id: str,
     analysis_type: str,
     selected_sheet: Optional[str] = None,
+    dataset_key: str = "",
     merge_instructions: Optional[list] = None,
+    attendance_review_decisions: Optional[list[AttendanceReviewDecision]] = None,
+    attendance_policy_rules: Optional[list[AttendancePolicyRule]] = None,
+    attendance_holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
+    attendance_administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
     dry_run: bool = False,
     message: str = "Attendance merge preview generated successfully.",
 ) -> UploadResponse:
@@ -446,8 +503,10 @@ def build_file_preview_with_merges(
     from app.services.attendance_validation import build_attendance_validation_summary_with_merges
 
     # Normalize merge instructions to ensure they're properly typed.
-    normalized_merge_instructions: Optional[list[AttendanceMergeInstruction]] = None
-    if merge_instructions:
+    normalized_merge_instructions: Optional[list[AttendanceMergeInstruction]] = (
+        [] if merge_instructions is not None else None
+    )
+    if merge_instructions is not None:
         try:
             normalized_merge_instructions = [
                 (
@@ -464,6 +523,35 @@ def build_file_preview_with_merges(
                 detail="Invalid merge instructions format.",
             ) from exc
 
+    target_sheet_name = selected_sheet or "CSV Data"
+    effective_dataset_key = dataset_key or build_dataset_key("", original_file_name)
+    saved_state = resolve_rule_state(
+        dataset_key=effective_dataset_key,
+        sheet_name=target_sheet_name,
+        merge_instructions=None,
+        review_decisions=attendance_review_decisions,
+        policy_rules=attendance_policy_rules,
+        holiday_markers=attendance_holiday_markers,
+        administrative_exceptions=attendance_administrative_exceptions,
+    )
+    combined_merge_instructions = (
+        normalized_merge_instructions
+        if merge_instructions is not None
+        else saved_state.merge_instructions
+    )
+    resolved_rule_state = AttendanceWorkingRuleState(
+        dataset_key=effective_dataset_key,
+        sheet_name=target_sheet_name,
+        merge_instructions=combined_merge_instructions,
+        review_decisions=saved_state.review_decisions,
+        policy_rules=saved_state.policy_rules,
+        holiday_markers=saved_state.holiday_markers,
+        administrative_exceptions=saved_state.administrative_exceptions,
+        saved_at=saved_state.saved_at,
+        saved_by=saved_state.saved_by,
+    )
+    attendance_audit_log = list_audit_log(effective_dataset_key, target_sheet_name)
+
     if extension == ".csv":
         return _build_csv_preview_with_merges(
             file_path,
@@ -471,7 +559,13 @@ def build_file_preview_with_merges(
             upload_id,
             analysis_type,
             message,
-            merge_instructions=normalized_merge_instructions,
+            merge_instructions=resolved_rule_state.merge_instructions,
+            review_decisions=resolved_rule_state.review_decisions,
+            policy_rules=resolved_rule_state.policy_rules,
+            holiday_markers=resolved_rule_state.holiday_markers,
+            administrative_exceptions=resolved_rule_state.administrative_exceptions,
+            applied_rule_state=resolved_rule_state,
+            audit_log=attendance_audit_log,
             dry_run=dry_run,
         )
 
@@ -483,7 +577,13 @@ def build_file_preview_with_merges(
             analysis_type=analysis_type,
             selected_sheet=selected_sheet,
             message=message,
-            merge_instructions=normalized_merge_instructions,
+            merge_instructions=resolved_rule_state.merge_instructions,
+            review_decisions=resolved_rule_state.review_decisions,
+            policy_rules=resolved_rule_state.policy_rules,
+            holiday_markers=resolved_rule_state.holiday_markers,
+            administrative_exceptions=resolved_rule_state.administrative_exceptions,
+            applied_rule_state=resolved_rule_state,
+            audit_log=attendance_audit_log,
             dry_run=dry_run,
         )
 
@@ -500,6 +600,12 @@ def _build_csv_preview_with_merges(
     analysis_type: str,
     message: str,
     merge_instructions: Optional[list] = None,
+    review_decisions: Optional[list[AttendanceReviewDecision]] = None,
+    policy_rules: Optional[list[AttendancePolicyRule]] = None,
+    holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
+    administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    applied_rule_state: Optional[AttendanceWorkingRuleState] = None,
+    audit_log: Optional[list] = None,
     dry_run: bool = False,
 ) -> UploadResponse:
     """Build CSV preview with merges applied."""
@@ -526,6 +632,12 @@ def _build_csv_preview_with_merges(
             structure_preparation=attendance_structure_preparation,
             analysis_type=analysis_type,
             merge_instructions=merge_instructions,
+            review_decisions=review_decisions,
+            policy_rules=policy_rules,
+            holiday_markers=holiday_markers,
+            administrative_exceptions=administrative_exceptions,
+            applied_rule_state=applied_rule_state,
+            audit_log=audit_log,
         )
     except Exception:
         logger.exception(
@@ -564,6 +676,12 @@ def _build_excel_preview_with_merges(
     message: str,
     selected_sheet: Optional[str] = None,
     merge_instructions: Optional[list] = None,
+    review_decisions: Optional[list[AttendanceReviewDecision]] = None,
+    policy_rules: Optional[list[AttendancePolicyRule]] = None,
+    holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
+    administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    applied_rule_state: Optional[AttendanceWorkingRuleState] = None,
+    audit_log: Optional[list] = None,
     dry_run: bool = False,
 ) -> UploadResponse:
     """Build Excel preview with merges applied."""
@@ -614,6 +732,12 @@ def _build_excel_preview_with_merges(
             structure_preparation=attendance_structure_preparation,
             analysis_type=analysis_type,
             merge_instructions=merge_instructions,
+            review_decisions=review_decisions,
+            policy_rules=policy_rules,
+            holiday_markers=holiday_markers,
+            administrative_exceptions=administrative_exceptions,
+            applied_rule_state=applied_rule_state,
+            audit_log=audit_log,
         )
     except Exception:
         logger.exception(
@@ -651,6 +775,12 @@ def _build_attendance_analysis_with_merges(
     structure_preparation: Optional[AttendanceSheetPreparation],
     analysis_type: str,
     merge_instructions: Optional[list] = None,
+    review_decisions: Optional[list[AttendanceReviewDecision]] = None,
+    policy_rules: Optional[list[AttendancePolicyRule]] = None,
+    holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
+    administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    applied_rule_state: Optional[AttendanceWorkingRuleState] = None,
+    audit_log: Optional[list] = None,
 ) -> dict:
     """
     Build attendance analysis with merge instructions applied.
@@ -698,11 +828,23 @@ def _build_attendance_analysis_with_merges(
                 dataframe,
                 structure_preparation=structure_preparation,
                 merge_instructions=merge_instructions,
+                review_decisions=review_decisions,
+                policy_rules=policy_rules,
+                holiday_markers=holiday_markers,
+                administrative_exceptions=administrative_exceptions,
+                applied_rule_state=applied_rule_state,
+                audit_log=audit_log,
             )
         else:
             attendance_summary = build_attendance_validation_summary(
                 dataframe,
                 structure_preparation=structure_preparation,
+                review_decisions=review_decisions,
+                policy_rules=policy_rules,
+                holiday_markers=holiday_markers,
+                administrative_exceptions=administrative_exceptions,
+                applied_rule_state=applied_rule_state,
+                audit_log=audit_log,
             )
         return {
             "analysis_overview": AnalysisOverview(

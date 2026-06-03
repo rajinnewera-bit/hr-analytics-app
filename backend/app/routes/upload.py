@@ -5,9 +5,16 @@ from time import perf_counter
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app.config import ALLOWED_FILE_TYPES
-from app.schemas.upload import AttendanceReviewRequest, AttendanceMergeRequest, UploadResponse
+from app.schemas.upload import (
+    AttendanceMergeRequest,
+    AttendanceReviewRequest,
+    AttendanceSaveRequest,
+    AttendanceWorkingRuleState,
+    UploadResponse,
+)
+from app.services.attendance_rule_store_service import save_rule_state
 from app.services.file_storage import delete_uploaded_file, load_uploaded_file, save_uploaded_file
-from app.services.file_preview import build_file_preview
+from app.services.file_preview import build_file_preview, build_file_preview_with_merges
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -63,6 +70,7 @@ async def upload_file(
             extension=extension,
             upload_id=upload_metadata["upload_id"],
             analysis_type=upload_metadata["analysis_type"],
+            dataset_key=upload_metadata.get("file_hash", ""),
         )
         logger.info(
             "Upload processed successfully in %.2fs upload_id=%s file=%s selected_sheet=%s analysis_type=%s",
@@ -108,6 +116,7 @@ async def analyze_selected_sheet(upload_id: str, sheet_name: str) -> UploadRespo
             upload_id=upload_metadata["upload_id"],
             analysis_type=upload_metadata.get("analysis_type", "Auto Detect"),
             selected_sheet=sheet_name,
+            dataset_key=upload_metadata.get("file_hash", ""),
             message="Sheet analyzed successfully.",
         )
         logger.info(
@@ -160,11 +169,13 @@ async def review_attendance_exceptions(
             upload_id=upload_metadata["upload_id"],
             analysis_type=upload_metadata.get("analysis_type", "Auto Detect"),
             selected_sheet=selected_sheet,
+            dataset_key=upload_metadata.get("file_hash", ""),
             message="Attendance review updated successfully.",
             attendance_review_decisions=review_request.decisions,
             attendance_policy_rules=review_request.policy_rules,
             attendance_holiday_markers=review_request.holiday_markers,
             attendance_administrative_exceptions=review_request.administrative_exceptions,
+            attendance_merge_instructions=review_request.merge_instructions,
         )
         logger.info(
             "Attendance review completed in %.2fs upload_id=%s sheet=%s",
@@ -208,8 +219,6 @@ async def apply_attendance_merge(
     )
     started_at = perf_counter()
     try:
-        from app.services.file_preview import build_file_preview_with_merges
-
         response = build_file_preview_with_merges(
             file_path=Path(upload_metadata["file_path"]),
             original_file_name=upload_metadata["original_file_name"],
@@ -217,7 +226,12 @@ async def apply_attendance_merge(
             upload_id=upload_metadata["upload_id"],
             analysis_type=upload_metadata.get("analysis_type", "Auto Detect"),
             selected_sheet=selected_sheet,
+            dataset_key=upload_metadata.get("file_hash", ""),
             merge_instructions=merge_request.merge_instructions,
+            attendance_review_decisions=merge_request.decisions,
+            attendance_policy_rules=merge_request.policy_rules,
+            attendance_holiday_markers=merge_request.holiday_markers,
+            attendance_administrative_exceptions=merge_request.administrative_exceptions,
             dry_run=merge_request.dry_run,
             message="Attendance merge preview generated successfully." if merge_request.dry_run else "Attendance merge applied successfully.",
         )
@@ -248,3 +262,74 @@ async def apply_attendance_merge(
             detail="Unexpected server error while applying attendance merge.",
         ) from exc
 
+
+@router.post("/upload/{upload_id}/attendance-save", response_model=UploadResponse)
+async def save_attendance_working_state(
+    upload_id: str,
+    save_request: AttendanceSaveRequest,
+) -> UploadResponse:
+    upload_metadata = load_uploaded_file(upload_id)
+    selected_sheet = save_request.sheet_name or "CSV Data"
+    logger.info(
+        "Attendance save requested upload_id=%s sheet=%s merge_instructions=%s decisions=%s",
+        upload_id,
+        selected_sheet,
+        len(save_request.merge_instructions),
+        len(save_request.decisions),
+    )
+    started_at = perf_counter()
+    try:
+        saved_state = save_rule_state(
+            dataset_key=upload_metadata.get("file_hash", ""),
+            sheet_name=selected_sheet,
+            state=AttendanceWorkingRuleState(
+                dataset_key=upload_metadata.get("file_hash", ""),
+                sheet_name=selected_sheet,
+                merge_instructions=save_request.merge_instructions,
+                review_decisions=save_request.decisions,
+                policy_rules=save_request.policy_rules,
+                holiday_markers=save_request.holiday_markers,
+                administrative_exceptions=save_request.administrative_exceptions,
+            ),
+            actor=save_request.actor,
+        )
+        response = build_file_preview(
+            file_path=Path(upload_metadata["file_path"]),
+            original_file_name=upload_metadata["original_file_name"],
+            extension=upload_metadata["extension"],
+            upload_id=upload_metadata["upload_id"],
+            analysis_type=upload_metadata.get("analysis_type", "Auto Detect"),
+            selected_sheet=selected_sheet,
+            dataset_key=upload_metadata.get("file_hash", ""),
+            message="Attendance changes saved successfully.",
+            attendance_merge_instructions=saved_state.merge_instructions,
+            attendance_review_decisions=saved_state.review_decisions,
+            attendance_policy_rules=saved_state.policy_rules,
+            attendance_holiday_markers=saved_state.holiday_markers,
+            attendance_administrative_exceptions=saved_state.administrative_exceptions,
+        )
+        logger.info(
+            "Attendance save completed in %.2fs upload_id=%s sheet=%s",
+            perf_counter() - started_at,
+            upload_id,
+            selected_sheet,
+        )
+        return response
+    except HTTPException as exc:
+        logger.warning(
+            "Attendance save failed upload_id=%s sheet=%s detail=%s",
+            upload_id,
+            selected_sheet,
+            exc.detail,
+        )
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Attendance save crashed unexpectedly upload_id=%s sheet=%s",
+            upload_id,
+            selected_sheet,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected server error while saving attendance changes.",
+        ) from exc

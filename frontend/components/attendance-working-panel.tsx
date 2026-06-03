@@ -17,12 +17,16 @@ export function AttendanceWorkingPanel() {
     result,
     isProcessing,
     isUpdatingAttendance,
+    isSavingAttendanceChanges,
     activeResultTab,
     setActiveResultTab,
     resultTabs,
     workspacePersistenceMessage,
+    hasUnsavedAttendanceChanges,
+    unsavedAttendanceChangeCount,
     handleAttendanceReviewUpdate,
     handleAttendanceMerge,
+    handleSaveAttendanceChanges,
     handleStartNewUpload,
   } = useUploadWorkspace();
   const router = useRouter();
@@ -46,6 +50,19 @@ export function AttendanceWorkingPanel() {
     router.push("/attendance/upload");
   };
 
+  const handleBackToUpload = () => {
+    if (
+      hasUnsavedAttendanceChanges &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `You have ${unsavedAttendanceChangeCount} unsaved attendance change(s). Leave this page without saving?`
+      )
+    ) {
+      return;
+    }
+    router.push("/attendance/upload");
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <PageHeader
@@ -54,6 +71,16 @@ export function AttendanceWorkingPanel() {
         description="Review punch exceptions, apply corrections, resolve merge candidates, and export the finalized working register."
         actions={
           <div className="flex flex-wrap gap-2">
+            {result?.analysis_overview.engine === "attendance" ? (
+              <button
+                type="button"
+                onClick={() => void handleSaveAttendanceChanges()}
+                disabled={!hasUnsavedAttendanceChanges || isSavingAttendanceChanges}
+                className="inline-flex items-center justify-center rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {isSavingAttendanceChanges ? "Saving..." : "Save All Changes"}
+              </button>
+            ) : null}
             {result ? (
               <button
                 type="button"
@@ -63,12 +90,13 @@ export function AttendanceWorkingPanel() {
                 Replace Workbook
               </button>
             ) : null}
-            <Link
-              href="/attendance/upload"
+            <button
+              type="button"
+              onClick={handleBackToUpload}
               className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-slate-50"
             >
               Back to Upload
-            </Link>
+            </button>
           </div>
         }
       />
@@ -79,10 +107,25 @@ export function AttendanceWorkingPanel() {
             {workspacePersistenceMessage}
           </section>
         ) : null}
+        {result?.analysis_overview.engine === "attendance" ? (
+          <section
+            className={`mb-4 rounded-[1.5rem] border p-4 text-sm shadow-sm ${
+              hasUnsavedAttendanceChanges
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : "border-emerald-200 bg-emerald-50 text-emerald-900"
+            }`}
+          >
+            {hasUnsavedAttendanceChanges
+              ? `Unsaved Changes (${unsavedAttendanceChangeCount})`
+              : "All attendance changes are saved."}
+          </section>
+        ) : null}
         {showReplaceConfirm ? (
           <section className="mb-4 rounded-[1.5rem] border border-amber-200 bg-amber-50 p-5 shadow-sm">
             <p className="text-sm font-semibold text-amber-900">
-              Replacing the workbook will overwrite the current upload session. Continue?
+              {hasUnsavedAttendanceChanges
+                ? `Replacing the workbook will discard ${unsavedAttendanceChangeCount} unsaved attendance change(s) and overwrite the current upload session. Continue?`
+                : "Replacing the workbook will overwrite the current upload session. Continue?"}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button

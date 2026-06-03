@@ -6,10 +6,12 @@ from typing import Optional
 import pandas as pd
 
 from app.schemas.upload import (
+    AttendanceAuditLogItem,
     AttendanceAdministrativeException,
     AttendanceDetectedColumns,
     AttendanceDuplicateDateIssue,
     AttendanceEmployeeActivityItem,
+    AttendanceWorkingRuleState,
     AttendanceHolidayMarker,
     AttendanceEmployeeMonthlySummaryItem,
     AttendanceFieldMapping,
@@ -134,6 +136,8 @@ def build_empty_attendance_validation_summary() -> AttendanceValidationSummary:
         employee_activity_summary=[],
         marked_holidays=[],
         administrative_exceptions=[],
+        applied_rule_state=AttendanceWorkingRuleState(),
+        audit_log=[],
         employee_monthly_summary=[],
         unit_summary=[],
         processed_attendance_rows=[],
@@ -148,6 +152,8 @@ def build_attendance_validation_summary_with_merges(
     policy_rules: Optional[list[AttendancePolicyRule]] = None,
     holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
     administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    applied_rule_state: Optional[AttendanceWorkingRuleState] = None,
+    audit_log: Optional[list[AttendanceAuditLogItem]] = None,
 ) -> AttendanceValidationSummary:
     """
     Build attendance validation summary with optional employee merge workflow.
@@ -310,6 +316,8 @@ def build_attendance_validation_summary_with_merges(
         employee_activity_summary=employee_activity_summary,
         marked_holidays=marked_holidays,
         administrative_exceptions=normalized_administrative_exceptions,
+        applied_rule_state=applied_rule_state or AttendanceWorkingRuleState(),
+        audit_log=audit_log or [],
         employee_monthly_summary=employee_monthly_summary,
         unit_summary=unit_summary,
         processed_attendance_rows=classification_result.processed_rows,
@@ -323,17 +331,24 @@ def build_attendance_validation_summary(
     policy_rules: Optional[list[AttendancePolicyRule]] = None,
     holiday_markers: Optional[list[AttendanceHolidayMarker]] = None,
     administrative_exceptions: Optional[list[AttendanceAdministrativeException]] = None,
+    merge_instructions: Optional[list[AttendanceMergeInstruction]] = None,
+    applied_rule_state: Optional[AttendanceWorkingRuleState] = None,
+    audit_log: Optional[list[AttendanceAuditLogItem]] = None,
 ) -> AttendanceValidationSummary:
     ingestion_result = ingest_attendance_dataframe(
         dataframe,
         structure_preparation=structure_preparation,
+    )
+    records_after_merge = apply_employee_merges(
+        ingestion_result.records,
+        merge_instructions or [],
     )
     merged_policy_rules = merge_attendance_policy_rules(policy_rules)
     marked_holidays = _normalize_holiday_markers(holiday_markers)
     normalized_administrative_exceptions = _normalize_administrative_exceptions(
         administrative_exceptions
     )
-    records_with_holidays = _apply_marked_holidays(ingestion_result.records, marked_holidays)
+    records_with_holidays = _apply_marked_holidays(records_after_merge, marked_holidays)
     records_with_exceptions = _apply_administrative_exceptions(
         records_with_holidays,
         normalized_administrative_exceptions,
@@ -456,6 +471,8 @@ def build_attendance_validation_summary(
         employee_activity_summary=employee_activity_summary,
         marked_holidays=marked_holidays,
         administrative_exceptions=normalized_administrative_exceptions,
+        applied_rule_state=applied_rule_state or AttendanceWorkingRuleState(),
+        audit_log=audit_log or [],
         employee_monthly_summary=employee_monthly_summary,
         unit_summary=unit_summary,
         processed_attendance_rows=classification_result.processed_rows,

@@ -227,6 +227,10 @@ export type AttendanceMergeInstruction = {
 export type AttendanceMergeRequest = {
   sheet_name: string;
   merge_instructions?: AttendanceMergeInstruction[];
+  decisions?: AttendanceReviewDecision[];
+  policy_rules?: AttendancePolicyRule[];
+  holiday_markers?: AttendanceHolidayMarker[];
+  administrative_exceptions?: AttendanceAdministrativeException[];
   dry_run?: boolean;
 };
 
@@ -267,6 +271,29 @@ export type AttendanceCompOffUsageTrailItem = {
 
 export type AttendanceEmployeeMonthlyExplainability = {
   comp_off_usage_trail: AttendanceCompOffUsageTrailItem[];
+};
+
+export type AttendanceWorkingRuleState = {
+  dataset_key: string;
+  sheet_name: string;
+  merge_instructions: AttendanceMergeInstruction[];
+  review_decisions: AttendanceReviewDecision[];
+  policy_rules: AttendancePolicyRule[];
+  holiday_markers: AttendanceHolidayMarker[];
+  administrative_exceptions: AttendanceAdministrativeException[];
+  saved_at: string;
+  saved_by: string;
+};
+
+export type AttendanceAuditLogItem = {
+  id: string;
+  timestamp: string;
+  action_type: string;
+  employee: string;
+  previous_value: string;
+  new_value: string;
+  details: string;
+  actor: string;
 };
 
 export type AttendanceEmployeeMonthlySummaryItem = {
@@ -402,6 +429,8 @@ export type AttendanceValidationSummary = {
   employee_activity_summary: AttendanceEmployeeActivityItem[];
   marked_holidays: AttendanceHolidayMarker[];
   administrative_exceptions: AttendanceAdministrativeException[];
+  applied_rule_state: AttendanceWorkingRuleState;
+  audit_log: AttendanceAuditLogItem[];
   employee_monthly_summary: AttendanceEmployeeMonthlySummaryItem[];
   unit_summary: AttendanceUnitSummaryItem[];
   processed_attendance_rows: AttendanceProcessedRow[];
@@ -443,4 +472,14 @@ export type UploadResponse = {
   payroll_validation_summary: ValidationSummary | null;
   attendance_validation_summary: AttendanceValidationSummary | null;
   workbook_intelligence_summary: WorkbookSheetSummary[];
+};
+
+export type AttendanceSaveRequest = {
+  sheet_name: string;
+  merge_instructions?: AttendanceMergeInstruction[];
+  decisions?: AttendanceReviewDecision[];
+  policy_rules?: AttendancePolicyRule[];
+  holiday_markers?: AttendanceHolidayMarker[];
+  administrative_exceptions?: AttendanceAdministrativeException[];
+  actor?: string;
 };

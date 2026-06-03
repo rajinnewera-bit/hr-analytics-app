@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 from shutil import copyfileobj
 from uuid import uuid4
@@ -20,12 +21,15 @@ def save_uploaded_file(file: UploadFile, analysis_type: str) -> dict[str, str]:
         with saved_file_path.open("wb") as buffer:
             copyfileobj(file.file, buffer)
 
+        file_hash = _hash_file(saved_file_path)
+
         metadata = {
             "upload_id": upload_id,
             "analysis_type": analysis_type,
             "file_path": str(saved_file_path),
             "original_file_name": file.filename or safe_name,
             "extension": extension,
+            "file_hash": file_hash,
         }
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
         return metadata
@@ -62,6 +66,10 @@ def load_uploaded_file(upload_id: str) -> dict[str, str]:
             detail="The uploaded file is no longer available.",
         )
 
+    if not metadata.get("file_hash"):
+        metadata["file_hash"] = _hash_file(saved_file_path)
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
     return metadata
 
 
@@ -82,3 +90,14 @@ def delete_uploaded_file(upload_id: str) -> None:
 
 def _build_metadata_path(upload_id: str) -> Path:
     return UPLOADS_DIR / f"{upload_id}.json"
+
+
+def _hash_file(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()

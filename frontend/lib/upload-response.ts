@@ -109,6 +109,18 @@ const emptyAttendanceValidationSummary: AttendanceValidationSummary = {
   employee_activity_summary: [],
   marked_holidays: [],
   administrative_exceptions: [],
+  applied_rule_state: {
+    dataset_key: "",
+    sheet_name: "",
+    merge_instructions: [],
+    review_decisions: [],
+    policy_rules: [],
+    holiday_markers: [],
+    administrative_exceptions: [],
+    saved_at: "",
+    saved_by: ""
+  },
+  audit_log: [],
   employee_monthly_summary: [],
   unit_summary: [],
   processed_attendance_rows: []
@@ -354,6 +366,102 @@ export function normalizeAttendanceValidationSummary(
       action_by: safeString(item?.action_by, "HR"),
       action_at: safeString(item?.action_at),
       source: safeString(item?.source, "Administrative Attendance Exception")
+    })),
+    applied_rule_state: {
+      dataset_key: safeString(attendanceValidationSummary.applied_rule_state?.dataset_key),
+      sheet_name: safeString(attendanceValidationSummary.applied_rule_state?.sheet_name),
+      merge_instructions: safeArray(
+        attendanceValidationSummary.applied_rule_state?.merge_instructions
+      ).map((item) => ({
+        final_employee_name: safeString(item?.final_employee_name),
+        final_employee_code: safeString(item?.final_employee_code) || undefined,
+        sources: {
+          source_names: safeStringArray(item?.sources?.source_names),
+          source_codes: safeStringArray(item?.sources?.source_codes)
+        },
+        adjustments: item?.adjustments
+          ? {
+              final_employee_name: safeString(item.adjustments.final_employee_name),
+              final_employee_code:
+                safeString(item.adjustments.final_employee_code) || undefined,
+              payable_days_adjustment:
+                typeof item.adjustments.payable_days_adjustment === "number"
+                  ? item.adjustments.payable_days_adjustment
+                  : undefined,
+              comp_off_adjustment:
+                typeof item.adjustments.comp_off_adjustment === "number"
+                  ? item.adjustments.comp_off_adjustment
+                  : undefined,
+              leave_adjustment:
+                typeof item.adjustments.leave_adjustment === "number"
+                  ? item.adjustments.leave_adjustment
+                  : undefined,
+              adjustment_remarks:
+                safeString(item.adjustments.adjustment_remarks) || undefined
+            }
+          : undefined
+      })),
+      review_decisions: safeArray(
+        attendanceValidationSummary.applied_rule_state?.review_decisions
+      ).map((item) => ({
+        exception_id: safeString(item?.exception_id),
+        action_key: safeString(item?.action_key),
+        action_by: safeString(item?.action_by, "HR"),
+        reason: safeString(item?.reason),
+        remarks: safeString(item?.remarks)
+      })),
+      policy_rules: safeArray(
+        attendanceValidationSummary.applied_rule_state?.policy_rules
+      ).map((rule) => ({
+        rule_id: safeString(rule?.rule_id),
+        label: safeString(rule?.label),
+        description: safeString(rule?.description),
+        value: safeString(rule?.value),
+        value_type: safeString(rule?.value_type),
+        enabled: Boolean(rule?.enabled)
+      })),
+      holiday_markers: safeArray(
+        attendanceValidationSummary.applied_rule_state?.holiday_markers
+      ).map((item) => ({
+        date: safeString(item?.date),
+        holiday_type: safeString(item?.holiday_type),
+        reason: safeString(item?.reason),
+        remarks: safeString(item?.remarks),
+        action_by: safeString(item?.action_by, "HR"),
+        action_at: safeString(item?.action_at),
+        source: safeString(item?.source, "Holiday Marker")
+      })),
+      administrative_exceptions: safeArray(
+        attendanceValidationSummary.applied_rule_state?.administrative_exceptions
+      ).map((item) => ({
+        date: safeString(item?.date),
+        scope: safeString(item?.scope, "all_employees"),
+        treatment_type: safeString(item?.treatment_type, "Paid Present"),
+        unit_name: safeString(item?.unit_name),
+        employee_ids: safeStringArray(item?.employee_ids),
+        custom_status_label: safeString(item?.custom_status_label),
+        custom_payable_value:
+          typeof item?.custom_payable_value === "number"
+            ? item.custom_payable_value
+            : null,
+        reason: safeString(item?.reason),
+        remarks: safeString(item?.remarks),
+        action_by: safeString(item?.action_by, "HR"),
+        action_at: safeString(item?.action_at),
+        source: safeString(item?.source, "Administrative Attendance Exception")
+      })),
+      saved_at: safeString(attendanceValidationSummary.applied_rule_state?.saved_at),
+      saved_by: safeString(attendanceValidationSummary.applied_rule_state?.saved_by)
+    },
+    audit_log: safeArray(attendanceValidationSummary.audit_log).map((item) => ({
+      id: safeString(item?.id),
+      timestamp: safeString(item?.timestamp),
+      action_type: safeString(item?.action_type),
+      employee: safeString(item?.employee),
+      previous_value: safeString(item?.previous_value),
+      new_value: safeString(item?.new_value),
+      details: safeString(item?.details),
+      actor: safeString(item?.actor)
     })),
     employee_monthly_summary: safeArray(
       attendanceValidationSummary.employee_monthly_summary

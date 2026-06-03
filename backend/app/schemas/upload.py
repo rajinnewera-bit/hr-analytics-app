@@ -190,6 +190,10 @@ class AttendanceMergeInstruction(BaseModel):
 class AttendanceMergeRequest(BaseModel):
     sheet_name: str
     merge_instructions: list[AttendanceMergeInstruction] = []
+    decisions: list["AttendanceReviewDecision"] = []
+    policy_rules: list[AttendancePolicyRule] = []
+    holiday_markers: list["AttendanceHolidayMarker"] = []
+    administrative_exceptions: list["AttendanceAdministrativeException"] = []
     dry_run: bool = False
 
 
@@ -230,6 +234,29 @@ class AttendanceCompOffUsageTrailItem(BaseModel):
 
 class AttendanceEmployeeMonthlyExplainability(BaseModel):
     comp_off_usage_trail: list[AttendanceCompOffUsageTrailItem] = []
+
+
+class AttendanceWorkingRuleState(BaseModel):
+    dataset_key: str = ""
+    sheet_name: str = ""
+    merge_instructions: list[AttendanceMergeInstruction] = []
+    review_decisions: list["AttendanceReviewDecision"] = []
+    policy_rules: list[AttendancePolicyRule] = []
+    holiday_markers: list["AttendanceHolidayMarker"] = []
+    administrative_exceptions: list["AttendanceAdministrativeException"] = []
+    saved_at: str = ""
+    saved_by: str = ""
+
+
+class AttendanceAuditLogItem(BaseModel):
+    id: str
+    timestamp: str
+    action_type: str
+    employee: str = ""
+    previous_value: str = ""
+    new_value: str = ""
+    details: str = ""
+    actor: str = ""
 
 
 class AttendanceEmployeeMonthlySummaryItem(BaseModel):
@@ -342,6 +369,17 @@ class AttendanceReviewRequest(BaseModel):
     policy_rules: list[AttendancePolicyRule] = []
     holiday_markers: list[AttendanceHolidayMarker] = []
     administrative_exceptions: list[AttendanceAdministrativeException] = []
+    merge_instructions: list[AttendanceMergeInstruction] = []
+
+
+class AttendanceSaveRequest(BaseModel):
+    sheet_name: str
+    merge_instructions: list[AttendanceMergeInstruction] = []
+    decisions: list[AttendanceReviewDecision] = []
+    policy_rules: list[AttendancePolicyRule] = []
+    holiday_markers: list[AttendanceHolidayMarker] = []
+    administrative_exceptions: list[AttendanceAdministrativeException] = []
+    actor: str = "HR Operator"
 
 
 class AttendanceRowIssue(BaseModel):
@@ -415,6 +453,8 @@ class AttendanceValidationSummary(BaseModel):
     employee_activity_summary: list[AttendanceEmployeeActivityItem]
     marked_holidays: list[AttendanceHolidayMarker]
     administrative_exceptions: list[AttendanceAdministrativeException] = []
+    applied_rule_state: AttendanceWorkingRuleState = AttendanceWorkingRuleState()
+    audit_log: list[AttendanceAuditLogItem] = []
     employee_monthly_summary: list[AttendanceEmployeeMonthlySummaryItem]
     unit_summary: list[AttendanceUnitSummaryItem]
     processed_attendance_rows: list[AttendanceProcessedRow]
